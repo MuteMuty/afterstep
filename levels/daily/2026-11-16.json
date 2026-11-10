@@ -1,0 +1,18 @@
+{
+  "date": "2026-11-16",
+  "delay": 3,
+  "desync": false,
+  "explored": 1884,
+  "grid": [
+    "...##.",
+    "......",
+    ".#....",
+    "....A.",
+    "..S.##",
+    "...aE#"
+  ],
+  "id": 7,
+  "par": 8,
+  "solution": "URRLD.DR",
+  "tier": "easy"
+}

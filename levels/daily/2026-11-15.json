@@ -1,0 +1,20 @@
+{
+  "date": "2026-11-15",
+  "delay": 4,
+  "desync": true,
+  "explored": 335523,
+  "grid": [
+    "........",
+    "........",
+    "#.......",
+    "####C#.#",
+    "##.bc...",
+    "##.#.S##",
+    "E.a#.A..",
+    ".##....B"
+  ],
+  "id": 6,
+  "par": 38,
+  "solution": "URUULLDUDDDUUUUDLLLRRRDUDD.LLDUDUD.DLL",
+  "tier": "hard"
+}

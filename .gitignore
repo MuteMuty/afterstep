@@ -1,0 +1,7 @@
+target/
+node_modules/
+web/dist/
+web/src/wasm/
+.wrangler/
+.DS_Store
+web/public/levels/

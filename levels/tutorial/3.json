@@ -1,0 +1,1 @@
+{"id": "t3", "name": "Timing", "tip": "Your echo is 6 moves behind. Press Space to wait for it.", "delay": 6, "grid": ["S...A", "#.###", "#a###", "#E###"]}

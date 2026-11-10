@@ -1,0 +1,19 @@
+{
+  "date": "2026-11-12",
+  "delay": 4,
+  "desync": true,
+  "explored": 202166,
+  "grid": [
+    ".......",
+    "..#.BA.",
+    ".....#.",
+    "..S....",
+    "...#..b",
+    "....##.",
+    "...##Ea"
+  ],
+  "id": 3,
+  "par": 23,
+  "solution": "URURDDDRRULLUURRDD.DDDL",
+  "tier": "medium"
+}

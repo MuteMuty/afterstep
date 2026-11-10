@@ -1,0 +1,18 @@
+{
+  "name": "afterstep",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "wasm": "sh scripts/build-wasm.sh",
+    "levels": "node scripts/build-levels.mjs",
+    "dev": "npm run wasm && npm run levels && vite web",
+    "build": "npm run wasm && npm run levels && tsc -p web && vite build web",
+    "preview": "vite preview web",
+    "deploy": "npm run build && wrangler deploy"
+  },
+  "devDependencies": {
+    "typescript": "5.8.3",
+    "vite": "6.3.5",
+    "wrangler": "4.160.0"
+  }
+}

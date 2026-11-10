@@ -1,0 +1,30 @@
+[package]
+name = "afterstep-engine"
+version = "0.1.0"
+edition = "2021"
+description = "Rules, solver and level generator for Afterstep"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+gen = ["dep:serde_json"]
+
+[dependencies]
+serde_json = { version = "1", optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "=0.2.130"
+
+[[bin]]
+name = "afterstep-gen"
+path = "src/bin/gen.rs"
+required-features = ["gen"]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"

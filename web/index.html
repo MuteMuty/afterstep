@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Afterstep: a daily puzzle where your past self holds the doors</title>
+    <meta name="description" content="A new puzzle every day. A few moves behind you, an echo repeats everything you did. Use it to hold doors open." />
+    <meta name="theme-color" content="#123566" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#e6edf4" media="(prefers-color-scheme: light)" />
+    <meta property="og:title" content="Afterstep" />
+    <meta property="og:description" content="A daily puzzle where your past self holds the doors." />
+    <meta property="og:url" content="https://afterstep.brightloopapps.com/" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Young+Serif&display=swap" rel="stylesheet" />
+  </head>
+  <body>
+    <header class="top">
+      <a class="brand" href="/" aria-label="Afterstep, today's puzzle">Afterstep</a>
+      <nav aria-label="Main">
+        <button data-nav="today" aria-current="page">Today</button>
+        <button data-nav="learn">How to play</button>
+        <button data-nav="archive">Past puzzles</button>
+      </nav>
+    </header>
+
+    <main>
+      <section class="play" aria-labelledby="level-title">
+        <div class="level-head">
+          <h1 id="level-title">Loading</h1>
+          <p id="level-sub" class="sub"></p>
+        </div>
+        <p id="tip" class="tip" hidden></p>
+
+        <div class="board-wrap">
+          <div id="board" class="board" role="application" aria-label="Puzzle board. Arrow keys move, Space waits, Z undoes."></div>
+        </div>
+
+        <div class="status" aria-live="polite">
+          <span id="echo-status"></span>
+          <span id="moves"></span>
+        </div>
+
+        <div class="controls">
+          <button id="undo" title="Undo (Z)">Undo</button>
+          <button id="wait" class="primary" title="Wait a turn (Space)">Wait</button>
+          <button id="restart" title="Start over (R)">Start over</button>
+        </div>
+        <div class="dpad" aria-label="Move">
+          <button data-move="0" aria-label="Up">▲</button>
+          <button data-move="2" aria-label="Left">◀</button>
+          <button data-move="1" aria-label="Down">▼</button>
+          <button data-move="3" aria-label="Right">▶</button>
+        </div>
+        <p class="keys">Arrows or WASD move · Space waits · Z undoes · R starts over</p>
+      </section>
+
+      <section id="archive" class="archive" hidden aria-labelledby="archive-title">
+        <h1 id="archive-title">Past puzzles</h1>
+        <ol id="archive-list"></ol>
+      </section>
+    </main>
+
+    <dialog id="win">
+      <h2 id="win-title">Solved</h2>
+      <p id="win-body"></p>
+      <div class="win-actions">
+        <button id="share" class="primary">Copy result</button>
+        <button id="next">Next</button>
+      </div>
+    </dialog>
+
+    <footer class="foot">
+      <p>A new puzzle every day. Made by <a href="https://github.com/MuteMuty">Erik Pahor</a> at <a href="https://lab.brightloopapps.com">BrightLoop Lab</a>, built with AI at the speed of thought. <a href="https://github.com/MuteMuty/afterstep">Source</a></p>
+    </footer>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
