@@ -51,6 +51,7 @@
 * { box-sizing: border-box; }
 
 html, body { margin: 0; }
+html { background: var(--paper-deep); }
 
 body {
   min-height: 100dvh;

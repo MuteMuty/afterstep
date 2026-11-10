@@ -197,7 +197,11 @@ function act(a: number) {
   }
   if (game.echo_blocked_last()) bump(els.echo);
   render();
-  if (game.won()) setTimeout(onWin, 160);
+  if (game.won()) {
+    const g = game;
+    // Only celebrate if the same game is still on screen (the player may have navigated away).
+    setTimeout(() => { if (game === g && g.won()) onWin(); }, 160);
+  }
 }
 
 function onWin() {
