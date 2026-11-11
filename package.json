@@ -8,9 +8,11 @@
     "dev": "npm run wasm && npm run levels && vite web",
     "build": "npm run wasm && npm run levels && tsc -p web && vite build web",
     "preview": "vite preview web",
-    "deploy": "npm run build && wrangler deploy"
+    "deploy": "npm run build && wrangler deploy",
+    "playtest": "node tests/playtest.mjs"
   },
   "devDependencies": {
+    "playwright": "^1.52.0",
     "typescript": "5.8.3",
     "vite": "6.3.5",
     "wrangler": "4.160.0"

@@ -5,3 +5,4 @@ web/src/wasm/
 .wrangler/
 .DS_Store
 web/public/levels/
+playtest-out/

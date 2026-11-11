@@ -1,0 +1,15 @@
+{
+  "name": "afterstep",
+  "url": "https://afterstep.brightloopapps.com",
+  "worker": "afterstep",
+  "commands": {
+    "install": "npm ci",
+    "test": "PATH=$HOME/.cargo/bin:$PATH cargo test --release --manifest-path engine/Cargo.toml --features gen",
+    "build": "npm run build",
+    "serve": "npx vite preview web --port {port} --strictPort",
+    "playtest": "node tests/playtest.mjs",
+    "deploy": "npx wrangler deploy",
+    "maintenance": "sh scripts/maintenance.sh"
+  },
+  "smoke": ["/", "/levels/index.json"]
+}
