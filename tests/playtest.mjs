@@ -1,5 +1,6 @@
 // Afterstep playtest: plays lessons 1-2 and today's puzzle (with the solver's
-// solution) in a real browser, at desktop-dark and phone-light sizes.
+// solution) in a real browser, at desktop-dark and phone-light sizes, and
+// checks the keyboard-first start (board focus, ring, Tab order) on desktop.
 //
 // Usage: node tests/playtest.mjs <baseUrl>
 // Env:   PLAYTEST_BROWSER  Chromium-based browser executable (default: Brave)
@@ -79,8 +80,42 @@ async function session(browser, name, viewport, colorScheme) {
   await page.close();
 }
 
+// Keyboard-first start (desktop): the board has focus on load with a visible
+// ring, and Tab from the top of the page goes nav buttons -> board -> Undo.
+async function keyboardStart(browser, name, viewport) {
+  const page = await browser.newPage({ viewport });
+  page.on("pageerror", (e) => fail(`${name}: page error: ${e.message}`));
+  await page.goto(base, { waitUntil: "networkidle" }).catch((e) => fail(`${name}: could not load ${base}: ${e.message}`));
+  if (!(await page.waitForSelector(".cell", { timeout: 8000 }).catch(() => null))) {
+    fail(`${name}: board never rendered`);
+    return page.close();
+  }
+  const ring = await page.evaluate(() => {
+    const el = document.activeElement, cs = getComputedStyle(el);
+    return { id: el.id, visible: el.matches(":focus-visible"), style: cs.outlineStyle, width: parseFloat(cs.outlineWidth) };
+  });
+  if (ring.id !== "board") fail(`${name}: board should have focus on load, "${ring.id || "something else"}" does`);
+  else if (!ring.visible || ring.style === "none" || !(ring.width > 0)) fail(`${name}: focused board has no visible focus ring`);
+  await page.screenshot({ path: join(out, `${name}-board-focus.png`) });
+
+  // Tab order from the top: click blank space at the top-left, then Tab.
+  await page.mouse.click(2, 2);
+  const seen = [];
+  for (let i = 0; i < 6; i++) {
+    await page.keyboard.press("Tab");
+    seen.push(await page.evaluate(() => {
+      const el = document.activeElement;
+      return el.id || el.dataset.nav || (el.classList.contains("brand") ? "brand" : el.tagName.toLowerCase());
+    }));
+  }
+  const want = "brand,today,learn,archive,board,undo";
+  if (seen.join() !== want) fail(`${name}: Tab order from the top was ${seen.join(" > ")}, wanted ${want.split(",").join(" > ")}`);
+  await page.close();
+}
+
 const browser = await chromium.launch({ executablePath: browserPath });
 try {
+  await keyboardStart(browser, "desktop-dark", { width: 1280, height: 900 });
   await session(browser, "desktop-dark", { width: 1280, height: 900 }, "dark");
   await session(browser, "phone-light", { width: 390, height: 844 }, "light");
 } finally {
