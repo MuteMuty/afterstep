@@ -48,6 +48,7 @@ async function session(browser, name, viewport, colorScheme) {
 
   // Lesson 1, then lesson 2 (which needs the echo).
   if ((await page.textContent("#level-title")) !== "Plates open doors") fail(`${name}: first visit should start the lessons`);
+  if (!(await page.textContent("#tip"))?.startsWith("Reach the ring.")) fail(`${name}: lesson 1 tip should state the goal`);
   await play(page, "RRRRR");
   if (!(await dialogOpens(page))) fail(`${name}: lesson 1 not solved by RRRRR`);
   await page.click("#next");
