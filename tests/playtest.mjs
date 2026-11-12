@@ -110,6 +110,26 @@ async function keyboardStart(browser, name, viewport) {
   }
   const want = "brand,today,learn,archive,board,undo";
   if (seen.join() !== want) fail(`${name}: Tab order from the top was ${seen.join(" > ")}, wanted ${want.split(",").join(" > ")}`);
+
+  // Space on the board waits; Space on a focused button does that button's job.
+  const moves = async () => Number((await page.textContent("#moves")).match(/Moves\s*(\d+)/)?.[1]);
+  await page.reload({ waitUntil: "networkidle" });
+  await page.waitForSelector(".cell", { timeout: 8000 });
+  await page.focus("#board");
+  const m0 = await moves();
+  await page.keyboard.press("Space");
+  if ((await moves()) !== m0 + 1) fail(`${name}: Space on the board should wait one step`);
+  await page.keyboard.press("Period");
+  if ((await moves()) !== m0 + 2) fail(`${name}: Period on the board should wait one step`);
+  await page.keyboard.press("ArrowRight");
+  if ((await moves()) !== m0 + 3) fail(`${name}: Arrow key on the board should move one step`);
+  await page.keyboard.press("Tab");
+  const onUndo = await page.evaluate(() => document.activeElement.id);
+  if (onUndo !== "undo") fail(`${name}: Tab from the board should reach Undo, reached "${onUndo}"`);
+  await page.keyboard.press("Space");
+  if ((await moves()) !== m0 + 2) fail(`${name}: Space on focused Undo should undo one step (moves ${await moves()}, wanted ${m0 + 2})`);
+  await page.keyboard.press("Enter");
+  if ((await moves()) !== m0 + 1) fail(`${name}: Enter on focused Undo should undo one step (moves ${await moves()}, wanted ${m0 + 1})`);
   await page.close();
 }
 
