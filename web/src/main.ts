@@ -335,12 +335,24 @@ board.addEventListener("pointerup", (e) => {
   if (Math.max(Math.abs(dx), Math.abs(dy)) < 18) return;
   act(Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? RIGHT : LEFT) : dy > 0 ? DOWN : UP);
 });
+/** Run a game control's action. After a mouse, touch or pen press, focus goes
+ *  back to the board so Space and the arrows play again; after a keyboard
+ *  press (detail 0, no pointer type) it stays on the control. */
+function control(b: HTMLElement, run: () => void) {
+  b.onclick = (e) => {
+    run();
+    // Browsers whose click isn't a PointerEvent still report detail 0 for keys.
+    const type = (e as PointerEvent).pointerType;
+    const byPointer = type === undefined ? e.detail > 0 : type !== "";
+    if (byPointer) board.focus({ preventScroll: true });
+  };
+}
 document.querySelectorAll<HTMLButtonElement>("[data-move]").forEach((b) => {
-  b.onclick = () => act(Number(b.dataset.move));
+  control(b, () => act(Number(b.dataset.move)));
 });
-$("wait").onclick = () => act(WAIT);
-$("undo").onclick = () => { if (game?.undo()) render(); };
-$("restart").onclick = () => { game?.reset(); render(); };
+control($("wait"), () => act(WAIT));
+control($("undo"), () => { if (game?.undo()) render(); });
+control($("restart"), () => { game?.reset(); render(); });
 document.querySelectorAll<HTMLButtonElement>("[data-nav]").forEach((b) => {
   b.onclick = () => {
     if (b.dataset.nav === "today") openDaily();
