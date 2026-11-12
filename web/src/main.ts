@@ -308,9 +308,12 @@ const KEYS: Record<string, number> = {
   ArrowUp: UP, KeyW: UP, ArrowDown: DOWN, KeyS: DOWN, ArrowLeft: LEFT, KeyA: LEFT,
   ArrowRight: RIGHT, KeyD: RIGHT, Space: WAIT, Period: WAIT,
 };
+const CONTROLS = "button, a[href], input, select, textarea, summary, [role=button]";
 window.addEventListener("keydown", (e) => {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   if (document.querySelector<HTMLElement>(".play")!.hidden) return;
+  // Space and Enter on a focused control do that control's own job.
+  if ((e.code === "Space" || e.code === "Enter") && e.target instanceof Element && e.target.closest(CONTROLS)) return;
   if (e.code in KEYS) {
     e.preventDefault();
     act(KEYS[e.code]);
