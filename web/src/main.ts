@@ -228,8 +228,9 @@ function renderMoves() {
 const MOVE_WORDS = ["move up", "move down", "move left", "move right", "wait a turn"];
 // The history the hint on screen was computed for, so a second press there isn't counted twice.
 let hintShownFor: string | null = null;
-// The first hint on a puzzle is a nudge about its idea, not a move. It never counts.
-// A puzzle with hints already counted opens past it; Start over gives it again (lab#29).
+// The first hint at the start of a puzzle is a nudge about its idea, not a move. It
+// never counts. Opening a puzzle (also by a reload, or leaving and returning) and
+// Start over each make the next first press the nudge again (lab#29).
 let nudged = false;
 // Takes the "Undo N moves?" offer while it shows (its link, or U); null otherwise.
 let takeUndoOffer: (() => void) | null = null;
@@ -397,7 +398,8 @@ function loadLevel(l: Level) {
   game?.free();
   game = new WasmGame(l.grid.join("\n"), l.delay);
   hintsUsed = mode === "daily" ? hintsSeen(save, l.date!) : 0;
-  nudged = hintsUsed > 0;
+  // Hints already counted stay counted (lab#25), but the nudge comes first again.
+  nudged = false;
   // A daily solved before in this browser opens solved, from its saved best.
   solved = mode === "daily" ? bestResult(save, l.date!) : null;
   lastBoard = null;

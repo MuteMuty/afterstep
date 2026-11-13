@@ -9,13 +9,14 @@
 // hints through lesson 5 (the echo bump). On today's puzzle and a past one each
 // hint counts as a move (lab#25): no "Perfect" or star at par, "with N hints"
 // in the dialog, copied result, solved line and Past puzzles, and today's count
-// is kept after How to play and back, a reload and Start over. Start over gives
-// the nudge again on the next first press, free (lab#29). A save from
+// is kept after How to play and back, a reload and Start over. Each of those
+// gives the nudge again on the next first press, free (lab#29). A save from
 // before hints counted still shows as it did, and a worse hinted solve doesn't
 // replace it. On the touch
 // phone, today's nudge fits on one line. Lessons: all five are played in a row
 // by keyboard (desktop, dark) and by tapping the d-pad (phone, light), checking
-// "Lesson n of 5", where each win dialog leads, and that lesson 5 fits.
+// "Lesson n of 5", where each win dialog leads, that lesson 5 fits, and that
+// lessons 4 and 5's tips name plates in full ("plate B", lab#29).
 // Solved state: hidden while the win dialog is open; after it closes (Escape), a
 // solved line with Copy result and Next stays (the result in the status line's
 // place, the buttons in the keys hint's or d-pad's), keys nudge it, Tab reaches
@@ -678,16 +679,20 @@ async function hintFlow(browser, name, viewport) {
   await page.screenshot({ path: join(out, `${name}-daily-hint.png`) });
 
   // Leaving and coming back, a reload and Start over all keep the hint: the
-  // puzzle starts again at move 1. After Start over the next H is the nudge
-  // again, free (lab#29), and the H after that a counted hint.
+  // puzzle starts again at move 1. Each way back to the start gives the nudge
+  // first, free (lab#29), and the H after that is a counted hint.
   await page.click('[data-nav="learn"]');
   await page.waitForFunction(() => document.querySelector("#level-title").textContent.startsWith("Plates"));
   await page.click('[data-nav="today"]');
   await onToday();
   if ((await moves()) !== 1) fail(`${name}: after How to play and back to Today the hint should still count (moves ${await moves()}, wanted 1)`);
+  await expectNudge("today's puzzle after How to play and back", nudges[`daily/${today}`]);
+  if ((await moves()) !== 1) fail(`${name}: the nudge after How to play and back should be free (moves ${await moves()}, wanted 1)`);
   await page.reload({ waitUntil: "networkidle" });
   await onToday();
   if ((await moves()) !== 1) fail(`${name}: after a reload the hint should still count (moves ${await moves()}, wanted 1)`);
+  await expectNudge("today's puzzle after a reload", nudges[`daily/${today}`]);
+  if ((await moves()) !== 1) fail(`${name}: the nudge after a reload should be free (moves ${await moves()}, wanted 1)`);
   await play(page, level.solution[0]);
   await page.click("#restart");
   if ((await moves()) !== 1) fail(`${name}: after Start over the hint should still count (moves ${await moves()}, wanted 1)`);
@@ -887,11 +892,15 @@ async function lessons(browser, name, viewport, colorScheme, touch) {
     if (at.wide) fail(`${name}: lesson ${n} scrolls sideways`);
     const fit = await fits(`lesson ${n}`);
     if (fit) console.log(`${name}: lesson ${n} fits, d-pad ends at ${Math.round(fit.dpad.bottom)}px of ${viewport.height}, cells ${at.cell.toFixed(1)}px`);
-    if (n === 4) four = at;
+    if (n === 4) {
+      four = at;
+      // Tips name plates in full, like the nudges (lab#29).
+      if ((await page.textContent("#tip")) !== "You hold plate A yourself. Your echo holds plate B.") fail(`${name}: lesson 4 tip should name plate B in full, says "${await page.textContent("#tip")}"`);
+    }
     if (n < 5) lowest = Math.max(lowest, at.dpad.bottom);
     if (n === 5) {
       if ((await page.textContent("#level-title")) !== "Out of step") fail(`${name}: lesson 5 should be "Out of step"`);
-      if ((await page.textContent("#tip")) !== "A closed door stops your echo. Keep it on B.") fail(`${name}: lesson 5 tip should explain the bump`);
+      if ((await page.textContent("#tip")) !== "A closed door stops your echo. Keep it on plate B.") fail(`${name}: lesson 5 tip should explain the bump, naming plate B in full`);
       if (at.board.right > viewport.width || at.board.left < 0 || at.dpad.right > viewport.width) fail(`${name}: lesson 5 board or d-pad is off screen`);
       if (at.board.height !== four.board.height || at.cell !== four.cell) fail(`${name}: lesson 5 board (${at.board.height}px, cells ${at.cell}px) should match lesson 4's (${four.board.height}px, ${four.cell}px)`);
       if (at.dpad.bottom > lowest + 0.5) fail(`${name}: lesson 5's d-pad ends at ${at.dpad.bottom}px, lower than any other lesson's (${lowest}px)`);
