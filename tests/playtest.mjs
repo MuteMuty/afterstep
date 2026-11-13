@@ -9,6 +9,11 @@
 // phone, today's nudge fits on one line. Lessons: all five are played in a row
 // by keyboard (desktop, dark) and by tapping the d-pad (phone, light), checking
 // "Lesson n of 5", where each win dialog leads, and that lesson 5 fits.
+// Solved state: after the win dialog closes (Escape), a solved line with Copy
+// result and Next stays below the board, keys nudge it, Tab reaches it, and
+// Undo / Start over remove it; reopening a solved puzzle from Past puzzles shows
+// it again from the saved best (an unsolved one doesn't), and on a touch phone
+// it takes the d-pad's place without pushing anything down.
 //
 // Usage: node tests/playtest.mjs <baseUrl>
 // Env:   PLAYTEST_BROWSER  Chromium-based browser executable (default: Brave)
@@ -38,6 +43,51 @@ const level = JSON.parse(readFileSync(join(repo, "levels/daily", `${today}.json`
 const failures = [];
 const fail = (msg) => failures.push(msg);
 const dialogOpens = (page) => page.waitForSelector("dialog[open]", { timeout: 2500 }).then(() => true, () => false);
+
+// The solved line below the board: its text and Next label, or null when hidden.
+const solvedLine = (page) => page.evaluate(() => {
+  const t = document.querySelector("#solved-text"), a = document.querySelector("#solved-actions");
+  if (!t || !a) return null;
+  if (a.hidden || !a.offsetParent) return t.textContent ? { text: t.textContent, actions: false } : null;
+  return { text: t.textContent, actions: true, share: !document.querySelector("#solved-share").hidden, next: document.querySelector("#solved-next").textContent };
+});
+async function expectSolved(page, name, label, text, next, share = true) {
+  const got = await solvedLine(page);
+  if (!got || !got.actions) return fail(`${name}: ${label}: the solved line should show with its buttons, got ${JSON.stringify(got)}`);
+  if (got.text !== text) fail(`${name}: ${label}: solved line should say "${text}", says "${got.text}"`);
+  if (got.next !== next) fail(`${name}: ${label}: solved line's Next should say "${next}", says "${got.next}"`);
+  if (got.share !== share) fail(`${name}: ${label}: solved line ${share ? "should" : "should not"} offer Copy result`);
+  const role = await page.getAttribute("#solved-text", "role");
+  if (role !== "status") fail(`${name}: ${label}: the solved line should be announced (role ${role})`);
+}
+async function expectNoSolved(page, name, label) {
+  const got = await solvedLine(page);
+  if (got) fail(`${name}: ${label}: there should be no solved line, got ${JSON.stringify(got)}`);
+}
+// A game key on a solved board leaves the moves alone and visibly nudges the solved line.
+async function expectCue(page, name, label, key) {
+  const moves = async () => Number((await page.textContent("#moves")).match(/Moves\s*(\d+)/)?.[1]);
+  const m0 = await moves();
+  await page.keyboard.press(key);
+  const cue = await page.evaluate(() => {
+    const s = document.querySelector("#solved");
+    const anim = [s, ...s.querySelectorAll("*")].map((e) => getComputedStyle(e).animationName).filter((n) => n !== "none");
+    return { bumped: s.classList.contains("bump"), anim };
+  });
+  if ((await moves()) !== m0) fail(`${name}: ${label}: ${key} on a solved board changed the moves`);
+  if (!cue.bumped || !cue.anim.length) fail(`${name}: ${label}: ${key} on a solved board should nudge the solved line (${JSON.stringify(cue)})`);
+}
+// Open a puzzle from Past puzzles and wait until it's on screen (its title may already match).
+async function openPast(page, id) {
+  await page.click('[data-nav="archive"]');
+  await page.waitForSelector("#archive:not([hidden])");
+  await page.evaluate((id) => [...document.querySelectorAll("#archive-list button")].find((b) => b.textContent.startsWith(`Puzzle ${id} `)).click(), id);
+  await page.waitForFunction((id) => !document.querySelector(".play").hidden && document.querySelector("#level-title").textContent === `Puzzle ${id}`, id);
+}
+const stubClipboard = (page) => page.evaluate(() => {
+  window.__copied = "";
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async (t) => { window.__copied = t; } } });
+});
 
 async function play(page, moves) {
   for (const m of moves) await page.keyboard.press(KEY[m]);
@@ -86,7 +136,10 @@ async function session(browser, name, viewport, colorScheme) {
     if (!body.includes(`${level.par} moves`)) fail(`${name}: expected a ${level.par}-move win, got "${body}"`);
   }
   await page.screenshot({ path: join(out, `${name}-daily-won.png`) });
-  if (won) await winKeys(page, name);
+  if (won) {
+    await winKeys(page, name);
+    await reopen(page, name);
+  }
   console.log(`${name}: ${sub}`);
   await page.close();
 }
@@ -109,10 +162,52 @@ async function winKeys(page, name) {
     fail(`${name}: copied result should show the ${level.par}-move win, got "${copied.split("\n")[0]}"`);
   await page.keyboard.press("Escape");
   if (await page.isVisible("dialog[open]")) fail(`${name}: Escape should close the win dialog`);
+
+  // The solved line stays: same result, the dialog's buttons, a nudge on keys.
+  await expectSolved(page, name, "after Escape", `Solved in ${level.par} moves, par ${level.par}`, "Past puzzles");
+  await expectCue(page, name, "after Escape", "ArrowLeft");
+  await expectCue(page, name, "after Escape", "KeyH");
+  await page.screenshot({ path: join(out, `${name}-daily-solved.png`) });
+  // Keyboard: Tab from the board reaches Copy result on the solved line, and Enter copies.
+  await stubClipboard(page);
+  await page.focus("#board");
+  for (let i = 0; i < 8 && (await page.evaluate(() => document.activeElement.id)) !== "solved-share"; i++) await page.keyboard.press("Tab");
+  if ((await page.evaluate(() => document.activeElement.id)) !== "solved-share") fail(`${name}: Tab from the board should reach the solved line's Copy result`);
+  else {
+    await page.keyboard.press("Enter");
+    const again = await page.evaluate(() => window.__copied);
+    if (again !== copied) fail(`${name}: the solved line should copy what the dialog copied, got "${again.split("\n")[0]}"`);
+    if ((await page.textContent("#solved-share")) !== "Copied") fail(`${name}: the solved line's Copy result should say "Copied"`);
+  }
+  await page.focus("#board");
   await page.keyboard.press("KeyZ");
   if ((await moves()) !== won - 1) fail(`${name}: Z after closing the dialog should undo (moves ${await moves()}, wanted ${won - 1})`);
+  await expectNoSolved(page, name, "after Undo");
   await page.keyboard.press("KeyR");
   if ((await moves()) !== 0) fail(`${name}: R after closing the dialog should restart (moves ${await moves()})`);
+}
+
+// Today's puzzle, solved earlier in this browser: reopening it from Past puzzles
+// shows the solved line from the saved best. Keys nudge it (also with reduced
+// motion); Start over removes it and play resumes.
+async function reopen(page, name) {
+  const moves = async () => Number((await page.textContent("#moves")).match(/Moves\s*(\d+)/)?.[1]);
+  await openPast(page, level.id);
+  await expectSolved(page, name, "reopened from Past puzzles", `Solved in ${level.par} moves, par ${level.par}`, "Past puzzles");
+  if ((await moves()) !== 0) fail(`${name}: a reopened puzzle should start at move 0`);
+  await expectCue(page, name, "reopened", "ArrowRight");
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expectCue(page, name, "reopened, reduced motion", "Space");
+  await page.emulateMedia({ reducedMotion: null });
+  await stubClipboard(page);
+  await page.click("#solved-share");
+  const copied = await page.evaluate(() => window.__copied);
+  if (!copied.includes(`: ${level.par} moves (par ${level.par}) ★`)) fail(`${name}: copying a reopened puzzle should use the saved best, got "${copied.split("\n")[0]}"`);
+  await page.screenshot({ path: join(out, `${name}-reopened.png`) });
+  await page.click("#restart");
+  await expectNoSolved(page, name, "reopened, after Start over");
+  await page.keyboard.press(KEY[level.solution[0]]);
+  if ((await moves()) !== 1) fail(`${name}: after Start over a reopened puzzle should play again (moves ${await moves()})`);
 }
 
 // Keyboard-first start (desktop): the board has focus on load with a visible
@@ -256,6 +351,43 @@ async function touchControls(browser, name, viewport) {
   if ((await layout()).dpad !== before.dpad) fail(`${name}: today's nudge moved the d-pad`);
   await page.screenshot({ path: join(out, `${name}-daily-nudge.png`) });
   console.log(`${name}: today's nudge "${fit.text}" (${fit.textW}px of ${fit.statusW}px)`);
+
+  // Start over, solve it, close the dialog without its buttons: the solved line takes the
+  // d-pad's place (which can't move anything now) and pushes nothing down.
+  const box = () => page.evaluate(() => {
+    const r = (s) => { const e = document.querySelector(s); if (!e.offsetParent) return null; const b = e.getBoundingClientRect(); return { top: b.top + window.scrollY, bottom: b.bottom + window.scrollY }; };
+    return { solved: r("#solved-actions") && r("#solved"), controls: r(".controls"), dpad: r(".dpad"), wide: document.documentElement.scrollWidth > window.innerWidth };
+  });
+  await page.tap("#restart");
+  // During play means just before the winning move: the status line can wrap
+  // once the echo appears, which moves the controls by itself.
+  await play(page, level.solution.slice(0, -1));
+  const playing = await box();
+  await play(page, level.solution.slice(-1));
+  if (!(await dialogOpens(page))) {
+    fail(`${name}: today's puzzle not solved by its solution`);
+    return page.close();
+  }
+  await page.evaluate(() => document.querySelector("#win").close());
+  await expectSolved(page, name, "after the dialog closed", `Solved in ${level.par} moves, par ${level.par}`, "Past puzzles");
+  const done = await box();
+  if (!done.solved) fail(`${name}: no solved line on the phone`);
+  else {
+    if (done.dpad) fail(`${name}: the d-pad should give its place to the solved line`);
+    if (done.solved.top < done.controls.bottom || done.solved.bottom > playing.dpad.bottom + 0.5)
+      fail(`${name}: the solved line (${Math.round(done.solved.top)}-${Math.round(done.solved.bottom)}px) should sit within the d-pad's place (${Math.round(playing.dpad.top)}-${Math.round(playing.dpad.bottom)}px)`);
+    if (done.controls.top !== playing.controls.top) fail(`${name}: the solved line moved the controls (${JSON.stringify(playing)} -> ${JSON.stringify(done)})`);
+    if (done.wide) fail(`${name}: the solved line scrolls sideways`);
+    console.log(`${name}: solved line ${Math.round(done.solved.top)}-${Math.round(done.solved.bottom)}px, d-pad during play ${Math.round(playing.dpad.top)}-${Math.round(playing.dpad.bottom)}px of 844`);
+  }
+  await page.screenshot({ path: join(out, `${name}-daily-solved.png`) });
+  await stubClipboard(page);
+  await page.tap("#solved-share");
+  if (!(await page.evaluate(() => window.__copied)).includes(`: ${level.par} moves (par ${level.par}) ★`)) fail(`${name}: tapping Copy result on the solved line should copy the result`);
+  await page.tap("#undo");
+  await expectNoSolved(page, name, "after tapping Undo");
+  const undone = await box();
+  if (undone.dpad?.top !== playing.dpad.top) fail(`${name}: after Undo the d-pad should be back where it was (${JSON.stringify(playing.dpad)} -> ${JSON.stringify(undone.dpad)})`);
   await page.close();
 }
 
@@ -374,6 +506,11 @@ async function hintFlow(browser, name, viewport) {
   if (!copied.includes(`: ${level.par} moves with 1 hint (par ${level.par}) ★`)) fail(`${name}: copied result should say "with 1 hint", got "${copied.split("\n")[0]}"`);
   await page.screenshot({ path: join(out, `${name}-daily-won-hint.png`) });
   await page.keyboard.press("Escape");
+  // The solved line says what the dialog said, hint and all, and copies the same.
+  await expectSolved(page, name, "today's puzzle with a hint", `Solved in ${level.par} moves with 1 hint, par ${level.par}`, "Past puzzles");
+  await page.evaluate(() => (window.__copied = ""));
+  await page.click("#solved-share");
+  if ((await page.evaluate(() => window.__copied)) !== copied) fail(`${name}: the solved line should copy "with 1 hint" like the dialog did`);
 
   // A past puzzle: a hint helps, but the result stays as it was.
   const pastDate = readdirSync(join(repo, "levels/daily")).map((f) => f.replace(".json", "")).filter((d) => d < today).sort()[0];
@@ -391,6 +528,27 @@ async function hintFlow(browser, name, viewport) {
       const pastBody = await page.textContent("#win-body");
       const pastCopy = await copy();
       if (/hint/.test(pastBody) || /hint/.test(pastCopy)) fail(`${name}: a past puzzle's result should not mention hints ("${pastBody}" / "${pastCopy.split("\n")[0]}")`);
+      await page.keyboard.press("Escape");
+      await expectSolved(page, name, `past puzzle ${pastDate}`, `Solved in ${past.par} moves, par ${past.par}`, "Past puzzles");
+      // Reopen it from Past puzzles: the same solved line, from the saved best.
+      await page.click("#solved-next");
+      if (await page.isHidden("#archive")) fail(`${name}: the solved line's Next on a past puzzle should open Past puzzles`);
+      await openPast(page, past.id);
+      await expectSolved(page, name, `reopened past puzzle ${pastDate}`, `Solved in ${past.par} moves, par ${past.par}`, "Past puzzles");
+      const reCopy = await page.evaluate(() => {
+        Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async (t) => { window.__copied = t; } } });
+        document.querySelector("#solved-share").click();
+        return new Promise((r) => setTimeout(() => r(window.__copied), 50));
+      });
+      if (!reCopy.includes(`#${past.id}: ${past.par} moves (par ${past.par}) ★`)) fail(`${name}: copying reopened past puzzle ${pastDate} should give its saved best, got "${reCopy.split("\n")[0]}"`);
+      await page.screenshot({ path: join(out, `${name}-past-reopened.png`) });
+    }
+    // An unsolved past puzzle shows no solved line.
+    const other = readdirSync(join(repo, "levels/daily")).map((f) => f.replace(".json", "")).filter((d) => d < today && d !== pastDate).sort()[0];
+    if (other) {
+      const o = JSON.parse(readFileSync(join(repo, "levels/daily", `${other}.json`), "utf8"));
+      await openPast(page, o.id);
+      await expectNoSolved(page, name, `unsolved past puzzle ${other}`);
     }
   }
   await page.close();
@@ -459,6 +617,7 @@ async function lessons(browser, name, viewport, colorScheme, touch) {
     const next = await page.textContent("#next");
     const want = n < 5 ? "Next lesson" : "Play today's puzzle";
     if (next !== want) fail(`${name}: lesson ${n} win dialog should offer "${want}", offers "${next}"`);
+    await expectSolved(page, name, `lesson ${n}`, `Solved in ${sol.length} moves`, want, false);
     if (n === 5) await page.screenshot({ path: join(out, `${name}-lesson5-won.png`) });
     if (touch) await page.tap("#next");
     else await page.keyboard.press("Enter"); // the dialog's focused button is Copy result (hidden) or Next

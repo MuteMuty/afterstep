@@ -299,6 +299,22 @@ button.hinted { border-color: var(--sun); box-shadow: 0 0 0 3px var(--sun-glow);
   .keys { display: none; }
 }
 
+/* ---------- solved line ---------- */
+/* Once solved, the result and the win dialog's buttons stay below the controls.
+   The d-pad can't move anything then, so the line takes its place and nothing
+   above it moves. Keys on a solved board nudge it. */
+.solved { text-align: center; font-variant-numeric: tabular-nums; }
+.solved-text { margin: 0; }
+.play.is-solved .solved { margin-top: 0.9rem; }
+.play.is-solved .dpad { display: none; }
+/* Wait can't do anything now either, so Copy result is the one filled button. */
+.play.is-solved #wait { background: transparent; color: inherit; border-color: var(--line); }
+.solved .win-actions { margin-top: 0.6rem; }
+.solved .win-actions[hidden] { display: none; }
+.solved.bump { animation: shake 0.22s ease; }
+.solved.bump .solved-text { animation: solved-flash 0.6s ease; }
+@keyframes solved-flash { 30% { color: var(--sun); } }
+
 /* ---------- archive ---------- */
 .archive h1 { font-family: var(--font-display); font-weight: 400; text-align: center; }
 .archive ol { list-style: none; padding: 0; margin: 0; display: grid; gap: 0.4rem; }
@@ -332,5 +348,5 @@ dialog h2 { font-family: var(--font-display); font-weight: 400; font-size: 2rem;
 
 @media (prefers-reduced-motion: reduce) {
   .piece, .cell.door::after, .cell.plate::after { transition: none; }
-  .echo.bump::before, .player.bump, .hint-mark::before { animation: none; }
+  .echo.bump::before, .player.bump, .hint-mark::before, .solved.bump { animation: none; }
 }

@@ -29,6 +29,10 @@ const movesEl = $("moves");
 const win = $<HTMLDialogElement>("win");
 const statusEl = document.querySelector<HTMLElement>(".status")!;
 const hintNote = $("hint-note");
+const playEl = document.querySelector<HTMLElement>(".play")!;
+const solvedEl = $("solved");
+const solvedText = $("solved-text");
+const solvedActions = $("solved-actions");
 
 // ---------- persistence (per-browser only) ----------
 const SAVE_KEY = "afterstep:v1";
@@ -189,6 +193,7 @@ function render() {
     ? `Echo appears in <strong>${echoIn}</strong>`
     : `Echo follows <strong>${level.delay}</strong> moves behind`;
   movesEl.innerHTML = `Moves <strong>${g.moves()}</strong>${level.par ? ` of par ${level.par}` : ""}`;
+  renderSolved();
 }
 
 // ---------- hints ----------
@@ -217,7 +222,8 @@ function note(...parts: (string | Node)[]) {
  *  the last position that can still be won. The first hint on a puzzle from a
  *  winnable position is a nudge about the idea instead. Hints never count as moves. */
 function showHint() {
-  if (!game || game.won() || win.open) return;
+  if (!game || win.open) return;
+  if (solved || game.won()) return nudgeSolved();
   const g = game;
   const here = g.history();
   if (hintShownFor === here) return;
@@ -259,7 +265,8 @@ function bump(el: HTMLElement) {
 }
 
 function act(a: number) {
-  if (!game || game.won() || win.open) return;
+  if (!game || win.open) return;
+  if (solved || game.won()) return nudgeSolved();
   if (!game.step(a)) {
     bump(els.player);
     return;
@@ -273,19 +280,44 @@ function act(a: number) {
   }
 }
 
-// Move and hint counts shown in the win dialog; the share text uses them, not live state.
-let winMoves = 0;
-let winHints = 0;
+// ---------- solved ----------
+// The result on screen once a puzzle is solved: the win just made (as the win
+// dialog shows it), or the saved best when a solved daily is opened again. The
+// dialog, the solved line and the copied result all read it. Null while playing;
+// Undo and Start over clear it.
+let solved: { moves: number; hints: number } | null = null;
 
 /** " with 2 hints" on today's daily when any were used, otherwise "". */
 function hintText(n: number): string {
   return n > 0 ? ` with ${n} ${n === 1 ? "hint" : "hints"}` : "";
 }
 
+/** Where Next goes: the next lesson, today's puzzle after the last one, or Past puzzles. */
+function nextLabel(): string {
+  if (mode === "daily") return "Past puzzles";
+  return tutorialStep + 1 < index.tutorial.length ? "Next lesson" : "Play today's puzzle";
+}
+
+/** The solved line below the board, with the win dialog's Copy result and Next.
+ *  While it shows, the d-pad (which can't move anything) gives it its place. */
+function renderSolved() {
+  playEl.classList.toggle("is-solved", !!solved);
+  solvedActions.hidden = !solved;
+  const text = solved ? `Solved in ${solved.moves} moves${hintText(solved.hints)}${level.par ? `, par ${level.par}` : ""}` : "";
+  if (solvedText.textContent !== text) solvedText.textContent = text;
+  $("solved-share").hidden = mode === "learn";
+  $("solved-next").textContent = nextLabel();
+}
+
+/** Keys on a solved board: nudge the solved line instead of doing nothing. */
+function nudgeSolved() {
+  if (solved) bump(solvedEl);
+}
+
 function onWin() {
   if (!game) return;
-  const moves = (winMoves = game.moves());
-  winHints = mode === "daily" && isToday ? hintsUsed : 0;
+  const moves = game.moves();
+  solved = { moves, hints: mode === "daily" && isToday ? hintsUsed : 0 };
   const par = level.par ?? moves;
   if (mode === "learn") {
     $("win-title").textContent = "Nice";
@@ -293,7 +325,6 @@ function onWin() {
       ? `Solved in ${moves} moves.`
       : "You know everything you need. Today's puzzle is waiting.";
     $("share").hidden = true;
-    $("next").textContent = tutorialStep + 1 < index.tutorial.length ? "Next lesson" : "Play today's puzzle";
   } else {
     const key = level.date!;
     const best = save.results[key];
@@ -302,10 +333,11 @@ function onWin() {
     $("win-title").textContent = moves <= par ? "Perfect" : "Solved";
     const s = streak();
     $("win-body").textContent =
-      `Puzzle ${level.id} in ${moves} moves${hintText(winHints)}. Par is ${par}.` + (s > 1 ? ` You're on a ${s}-day streak.` : "");
+      `Puzzle ${level.id} in ${moves} moves${hintText(solved.hints)}. Par is ${par}.` + (s > 1 ? ` You're on a ${s}-day streak.` : "");
     $("share").hidden = false;
-    $("next").textContent = "Past puzzles";
   }
+  $("next").textContent = nextLabel();
+  renderSolved();
   win.showModal();
 }
 
@@ -315,6 +347,9 @@ function loadLevel(l: Level) {
   game = new WasmGame(l.grid.join("\n"), l.delay);
   hintsUsed = 0;
   nudged = false;
+  // A daily solved before in this browser opens solved, from its saved best.
+  const best = mode === "daily" ? save.results[l.date!] : 0;
+  solved = best ? { moves: best, hints: 0 } : null;
   buildBoard();
   if (mode === "learn") {
     title.textContent = l.name ?? "Lesson";
@@ -403,10 +438,9 @@ window.addEventListener("keydown", (e) => {
     act(KEYS[e.code]);
   } else if (e.code === "KeyZ" || e.code === "Backspace") {
     e.preventDefault();
-    if (game?.undo()) render();
+    undo();
   } else if (e.code === "KeyR") {
-    game?.reset();
-    render();
+    restart();
   } else if (e.code === "KeyH") {
     showHint();
   }
@@ -421,6 +455,23 @@ board.addEventListener("pointerup", (e) => {
   if (Math.max(Math.abs(dx), Math.abs(dy)) < 18) return;
   act(Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? RIGHT : LEFT) : dy > 0 ? DOWN : UP);
 });
+/** Undo a move. On a solved board it also leaves the solved state, even when
+ *  there's no move to undo (a solved daily opened again starts at move 0). */
+function undo() {
+  if (!game) return;
+  const wasSolved = !!solved;
+  if (game.undo() || wasSolved) {
+    solved = null;
+    render();
+  }
+}
+function restart() {
+  if (!game) return;
+  game.reset();
+  solved = null;
+  render();
+}
+
 /** Run a game control's action. After a mouse, touch or pen press, focus goes
  *  back to the board so Space and the arrows play again; after a keyboard
  *  press (detail 0, no pointer type) it stays on the control. */
@@ -437,8 +488,8 @@ document.querySelectorAll<HTMLButtonElement>("[data-move]").forEach((b) => {
   control(b, () => act(Number(b.dataset.move)));
 });
 control($("wait"), () => act(WAIT));
-control($("undo"), () => { if (game?.undo()) render(); });
-control($("restart"), () => { game?.reset(); render(); });
+control($("undo"), undo);
+control($("restart"), restart);
 control($("hint"), showHint);
 document.querySelectorAll<HTMLButtonElement>("[data-nav]").forEach((b) => {
   b.onclick = () => {
@@ -449,7 +500,8 @@ document.querySelectorAll<HTMLButtonElement>("[data-nav]").forEach((b) => {
 });
 document.querySelector<HTMLAnchorElement>(".brand")!.onclick = (e) => { e.preventDefault(); openDaily(); };
 
-$("next").onclick = () => {
+// The win dialog and the solved line share their Next and Copy result.
+function next() {
   win.close();
   if (mode === "learn") {
     if (tutorialStep + 1 < index.tutorial.length) openLearn(tutorialStep + 1);
@@ -459,18 +511,31 @@ $("next").onclick = () => {
       openDaily();
     }
   } else openArchive();
-};
-$("share").onclick = async () => {
-  const moves = winMoves;
-  const text = `Afterstep #${level.id}: ${moves} moves${hintText(winHints)} (par ${level.par})${moves <= (level.par ?? 0) ? " ★" : ""}\nhttps://afterstep.brightloopapps.com`;
+}
+async function copyResult(button: HTMLElement) {
+  if (!solved) return;
+  const { moves, hints } = solved;
+  const text = `Afterstep #${level.id}: ${moves} moves${hintText(hints)} (par ${level.par})${moves <= (level.par ?? 0) ? " ★" : ""}\nhttps://afterstep.brightloopapps.com`;
   try {
     await navigator.clipboard.writeText(text);
-    $("share").textContent = "Copied";
+    button.textContent = "Copied";
   } catch {
-    $("share").textContent = "Copy failed";
+    button.textContent = "Copy failed";
   }
-  setTimeout(() => ($("share").textContent = "Copy result"), 1600);
-};
+  setTimeout(() => (button.textContent = "Copy result"), 1600);
+}
+$("next").onclick = next;
+$("solved-next").onclick = next;
+$("share").onclick = () => copyResult($("share"));
+$("solved-share").onclick = () => copyResult($("solved-share"));
+// The page behind the open dialog is inert, so screen readers miss the solved
+// line appearing. Say it again once the dialog closes (unless Next moved on).
+win.addEventListener("close", () => {
+  const g = game, text = solvedText.textContent;
+  if (!solved || !text) return;
+  solvedText.textContent = "";
+  requestAnimationFrame(() => { if (game === g && solved) solvedText.textContent = text; });
+});
 
 // ---------- boot ----------
 (async () => {
