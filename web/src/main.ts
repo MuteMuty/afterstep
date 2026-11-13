@@ -27,6 +27,8 @@ const tip = $("tip");
 const echoStatus = $("echo-status");
 const movesEl = $("moves");
 const win = $<HTMLDialogElement>("win");
+const statusEl = document.querySelector<HTMLElement>(".status")!;
+const hintNote = $("hint-note");
 
 // ---------- persistence (per-browser only) ----------
 const SAVE_KEY = "afterstep:v1";
@@ -65,13 +67,16 @@ function streak(): number {
 let index: Index;
 let level: Level;
 let mode: "daily" | "learn" = "daily";
+// Today's daily counts hints in its result; lessons and past puzzles don't.
+let isToday = false;
+let hintsUsed = 0;
 let tutorialStep = 0;
 let game: WasmGame | null = null;
 let w = 0, h = 0, start = 0;
 let tiles: string[] = [];
-const els: { cells: HTMLElement[]; player: HTMLElement; echo: HTMLElement; spawn: HTMLElement; prints: HTMLElement[] } = {
+const els: { cells: HTMLElement[]; player: HTMLElement; echo: HTMLElement; spawn: HTMLElement; hint: HTMLElement; prints: HTMLElement[] } = {
   cells: [], player: document.createElement("div"), echo: document.createElement("div"),
-  spawn: document.createElement("div"), prints: [],
+  spawn: document.createElement("div"), hint: document.createElement("div"), prints: [],
 };
 
 function place(el: HTMLElement, pos: number) {
@@ -117,7 +122,9 @@ function buildBoard() {
   els.spawn.className = "spawn";
   els.echo.className = "piece echo";
   els.player.className = "piece player";
-  board.append(els.spawn, els.echo, els.player);
+  els.hint.className = "hint-mark";
+  els.hint.hidden = true;
+  board.append(els.spawn, els.hint, els.echo, els.player);
 }
 
 function passableNow(pos: number, open: number): boolean {
@@ -149,6 +156,7 @@ function predictEcho(g: WasmGame): { pos: number; inMoves: number }[] {
 
 function render() {
   if (!game) return;
+  clearHint();
   const g = game;
   const open = g.open_doors();
   const player = g.player();
@@ -183,6 +191,61 @@ function render() {
   movesEl.innerHTML = `Moves <strong>${g.moves()}</strong>${level.par ? ` of par ${level.par}` : ""}`;
 }
 
+// ---------- hints ----------
+const MOVE_WORDS = ["move up", "move down", "move left", "move right", "wait a turn"];
+// The history the hint on screen was computed for, so a second press there isn't counted twice.
+let hintShownFor: string | null = null;
+
+function clearHint() {
+  hintShownFor = null;
+  els.hint.hidden = true;
+  hintNote.hidden = true;
+  hintNote.replaceChildren();
+  statusEl.classList.remove("hinting");
+  document.querySelectorAll(".hinted").forEach((b) => b.classList.remove("hinted"));
+}
+
+function note(...parts: (string | Node)[]) {
+  hintNote.replaceChildren(...parts);
+  hintNote.hidden = false;
+  statusEl.classList.add("hinting");
+}
+
+/** Show the next move of a shortest win from here, or offer to undo back to
+ *  the last position that can still be won. Hints never count as moves. */
+function showHint() {
+  if (!game || game.won() || win.open) return;
+  const g = game;
+  const here = g.history();
+  if (hintShownFor === here) return;
+  const h = g.hint();
+  clearHint();
+  if (h >= 0 && h <= WAIT) {
+    hintShownFor = here;
+    hintsUsed++;
+    const [dx, dy] = DELTA[h];
+    const p = g.player();
+    place(els.hint, p + dy * w + dx);
+    els.hint.dataset.hint = String(h);
+    els.hint.hidden = false;
+    (h === WAIT ? $("wait") : document.querySelector(`.dpad [data-move="${h}"]`))?.classList.add("hinted");
+    note(`Hint: ${MOVE_WORDS[h]}.`);
+  } else if (h < 0) {
+    const n = -h;
+    const undo = document.createElement("button");
+    undo.className = "link";
+    undo.textContent = `Undo ${n} ${n === 1 ? "move" : "moves"}?`;
+    undo.onclick = () => {
+      for (let i = 0; i < n; i++) g.undo();
+      render();
+      board.focus({ preventScroll: true });
+    };
+    note("You can't win from here. ", undo);
+  } else if (h === 6) {
+    note("No hint found from here.");
+  }
+}
+
 function bump(el: HTMLElement) {
   el.classList.remove("bump");
   void el.offsetWidth;
@@ -204,12 +267,19 @@ function act(a: number) {
   }
 }
 
-// Move count shown in the win dialog; the share text uses it, not live state.
+// Move and hint counts shown in the win dialog; the share text uses them, not live state.
 let winMoves = 0;
+let winHints = 0;
+
+/** " with 2 hints" on today's daily when any were used, otherwise "". */
+function hintText(n: number): string {
+  return n > 0 ? ` with ${n} ${n === 1 ? "hint" : "hints"}` : "";
+}
 
 function onWin() {
   if (!game) return;
   const moves = (winMoves = game.moves());
+  winHints = mode === "daily" && isToday ? hintsUsed : 0;
   const par = level.par ?? moves;
   if (mode === "learn") {
     $("win-title").textContent = "Nice";
@@ -226,7 +296,7 @@ function onWin() {
     $("win-title").textContent = moves <= par ? "Perfect" : "Solved";
     const s = streak();
     $("win-body").textContent =
-      `Puzzle ${level.id} in ${moves} moves. Par is ${par}.` + (s > 1 ? ` You're on a ${s}-day streak.` : "");
+      `Puzzle ${level.id} in ${moves} moves${hintText(winHints)}. Par is ${par}.` + (s > 1 ? ` You're on a ${s}-day streak.` : "");
     $("share").hidden = false;
     $("next").textContent = "Past puzzles";
   }
@@ -237,6 +307,7 @@ function loadLevel(l: Level) {
   level = l;
   game?.free();
   game = new WasmGame(l.grid.join("\n"), l.delay);
+  hintsUsed = 0;
   buildBoard();
   if (mode === "learn") {
     title.textContent = l.name ?? "Lesson";
@@ -260,8 +331,9 @@ async function openDaily(date?: string) {
   const entry = (date && avail.find((d) => d.date === date)) || avail[avail.length - 1] || index.daily[0];
   const l: Level = await fetch(`/levels/daily/${entry.date}.json`).then((r) => r.json());
   show("play");
+  isToday = entry.date === today;
   loadLevel(l);
-  setNav(entry.date === today ? "today" : "archive");
+  setNav(isToday ? "today" : "archive");
 }
 
 function openLearn(step = 0) {
@@ -328,6 +400,8 @@ window.addEventListener("keydown", (e) => {
   } else if (e.code === "KeyR") {
     game?.reset();
     render();
+  } else if (e.code === "KeyH") {
+    showHint();
   }
 });
 
@@ -358,6 +432,7 @@ document.querySelectorAll<HTMLButtonElement>("[data-move]").forEach((b) => {
 control($("wait"), () => act(WAIT));
 control($("undo"), () => { if (game?.undo()) render(); });
 control($("restart"), () => { game?.reset(); render(); });
+control($("hint"), showHint);
 document.querySelectorAll<HTMLButtonElement>("[data-nav]").forEach((b) => {
   b.onclick = () => {
     if (b.dataset.nav === "today") openDaily();
@@ -380,7 +455,7 @@ $("next").onclick = () => {
 };
 $("share").onclick = async () => {
   const moves = winMoves;
-  const text = `Afterstep #${level.id}: ${moves} moves (par ${level.par})${moves <= (level.par ?? 0) ? " ★" : ""}\nhttps://afterstep.brightloopapps.com`;
+  const text = `Afterstep #${level.id}: ${moves} moves${hintText(winHints)} (par ${level.par})${moves <= (level.par ?? 0) ? " ★" : ""}\nhttps://afterstep.brightloopapps.com`;
   try {
     await navigator.clipboard.writeText(text);
     $("share").textContent = "Copied";

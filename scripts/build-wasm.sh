@@ -23,6 +23,7 @@ export class WasmGame {
   echo_next(): number;
   history(): string;
   load(moves: string): boolean;
+  /** 0-4: next action; -n: lost, undo n moves; 5: won; 6: no answer. */
   hint(): number;
   free(): void;
 }

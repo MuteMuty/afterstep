@@ -34,18 +34,20 @@
         <p id="tip" class="tip" hidden></p>
 
         <div class="board-wrap">
-          <div id="board" class="board" role="application" aria-label="Puzzle board. Arrow keys move, Space waits, Z undoes."></div>
+          <div id="board" class="board" role="application" aria-label="Puzzle board. Arrow keys move, Space waits, Z undoes, H shows a hint."></div>
         </div>
 
         <div class="status" aria-live="polite">
           <span id="echo-status"></span>
           <span id="moves"></span>
+          <span id="hint-note" class="hint-note" hidden></span>
         </div>
 
         <div class="controls">
           <button id="undo" title="Undo (Z)">Undo</button>
           <button id="wait" class="primary" title="Wait a turn (Space)">Wait</button>
           <button id="restart" title="Start over (R)">Start over</button>
+          <button id="hint" title="Show the next move (H)">Hint</button>
         </div>
         <div class="dpad" aria-label="Move">
           <button data-move="0" aria-label="Up">▲</button>
@@ -53,7 +55,7 @@
           <button data-move="1" aria-label="Down">▼</button>
           <button data-move="3" aria-label="Right">▶</button>
         </div>
-        <p class="keys">Arrows or WASD move · Space waits · Z undoes · R starts over</p>
+        <p class="keys">Arrows or WASD move · Space waits · Z undoes · R starts over · H hints</p>
       </section>
 
       <section id="archive" class="archive" hidden aria-labelledby="archive-title">
