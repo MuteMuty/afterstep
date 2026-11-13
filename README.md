@@ -27,4 +27,4 @@ cargo run --release --manifest-path engine/Cargo.toml --features gen -- check le
 npm run deploy                      # build and deploy to Cloudflare
 ```
 
-Part of [BrightLoop Lab](https://github.com/MuteMuty/lab), built with AI at the speed of thought.
+Made by [Erik Pahor](https://github.com/MuteMuty) at [BrightLoop Lab](https://lab.brightloopapps.com).

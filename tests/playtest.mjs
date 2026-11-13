@@ -1,6 +1,7 @@
 // Afterstep playtest: plays lessons 1-2 and today's puzzle (with the solver's
 // solution) in a real browser, at desktop-dark and phone-light sizes, and
-// checks the keyboard-first start (board focus, ring, Tab order) on desktop.
+// checks the keyboard-first start (board focus, ring, Tab order, click-then-key)
+// on desktop and tapping the controls on a touch phone.
 //
 // Usage: node tests/playtest.mjs <baseUrl>
 // Env:   PLAYTEST_BROWSER  Chromium-based browser executable (default: Brave)
@@ -156,6 +157,48 @@ async function keyboardStart(browser, name, viewport) {
   if ((await moves()) !== m0 + 2) fail(`${name}: Space on focused Undo should undo one step (moves ${await moves()}, wanted ${m0 + 2})`);
   await page.keyboard.press("Enter");
   if ((await moves()) !== m0 + 1) fail(`${name}: Enter on focused Undo should undo one step (moves ${await moves()}, wanted ${m0 + 1})`);
+  if ((await page.evaluate(() => document.activeElement.id)) !== "undo") fail(`${name}: keyboard Undo should keep focus on Undo`);
+
+  // A mouse click on a game control hands focus back to the board, so the
+  // next Space waits and arrows move without another click.
+  for (const id of ["undo", "wait", "restart"]) {
+    await page.click(`#${id}`);
+    const focused = await page.evaluate(() => document.activeElement.id);
+    if (focused !== "board") fail(`${name}: clicking ${id} should hand focus back to the board, "${focused}" has it`);
+    const before = await moves();
+    await page.keyboard.press("Space");
+    if ((await moves()) !== before + 1) fail(`${name}: Space after clicking ${id} should wait one step (moves ${await moves()}, wanted ${before + 1})`);
+    await page.keyboard.press("ArrowRight");
+    if ((await moves()) !== before + 2) fail(`${name}: Arrow key after clicking ${id} should move one step`);
+  }
+  await page.close();
+}
+
+// Touch (phone): tapping controls works, keeps the page still, and leaves no
+// focus ring on the board.
+async function touchControls(browser, name, viewport) {
+  const page = await browser.newPage({ viewport, hasTouch: true, isMobile: true });
+  page.on("pageerror", (e) => fail(`${name}: page error: ${e.message}`));
+  await page.goto(base, { waitUntil: "networkidle" }).catch((e) => fail(`${name}: could not load ${base}: ${e.message}`));
+  if (!(await page.waitForSelector(".cell", { timeout: 8000 }).catch(() => null))) {
+    fail(`${name}: board never rendered`);
+    return page.close();
+  }
+  const moves = async () => Number((await page.textContent("#moves")).match(/Moves\s*(\d+)/)?.[1]);
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  const steps = [["#wait", 1], ['[data-move="3"]', 2], ["#undo", 1], ["#restart", 0]];
+  for (const [sel, want] of steps) {
+    const y0 = await page.evaluate(() => window.scrollY);
+    await page.tap(sel);
+    await page.waitForTimeout(100);
+    const got = await moves(), y1 = await page.evaluate(() => window.scrollY);
+    if (got !== want) fail(`${name}: tapping ${sel} left moves at ${got}, wanted ${want}`);
+    if (y1 !== y0) fail(`${name}: tapping ${sel} scrolled the page (${y0} -> ${y1})`);
+    const { id, ring } = await page.evaluate(() => ({ id: document.activeElement.id, ring: document.querySelector("#board").matches(":focus-visible") }));
+    if (id !== "board") fail(`${name}: tapping ${sel} should hand focus back to the board, "${id}" has it`);
+    if (ring) fail(`${name}: tapping ${sel} left a focus ring on the board`);
+  }
+  await page.screenshot({ path: join(out, `${name}-after-taps.png`) });
   await page.close();
 }
 
@@ -164,6 +207,7 @@ try {
   await keyboardStart(browser, "desktop-dark", { width: 1280, height: 900 });
   await session(browser, "desktop-dark", { width: 1280, height: 900 }, "dark");
   await session(browser, "phone-light", { width: 390, height: 844 }, "light");
+  await touchControls(browser, "phone-touch", { width: 390, height: 844 });
 } finally {
   await browser.close();
 }
