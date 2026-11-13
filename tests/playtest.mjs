@@ -42,6 +42,7 @@
 // 429 notes, keyboard, labels and no cookies; the page is no taller with the
 // heart at 390x844; with the API resting (503), unreachable or slow the game
 // plays at once and the heart never shows.
+// Font (lab#36): Young Serif loads, from Afterstep's own origin.
 // Routes (lab#8): today (bare URL), Past puzzles (#/past), a past puzzle
 // (#/puzzle/<date>) and lessons (#/learn/<n>) each push one history entry
 // (moves push none) and set the title; Back and Forward walk them without
@@ -173,6 +174,14 @@ async function session(browser, name, viewport, colorScheme) {
     fail(`${name}: board never rendered`);
     return page.close();
   }
+
+  // The display font (lab#36) is Afterstep's own file, and it loads.
+  const font = {
+    loaded: await page.evaluate(() => document.fonts.ready.then((fonts) => [...fonts].some((f) => f.family.replace(/"/g, "") === "Young Serif" && f.status === "loaded"))),
+    files: page.fonts,
+  };
+  if (!font.loaded || !font.files.length || font.files.some((u) => new URL(u).origin !== new URL(base).origin))
+    fail(`${name}: Young Serif should load from Afterstep's own origin, got ${JSON.stringify(font)}`);
 
   // Lesson 1, then lesson 2 (which needs the echo).
   if ((await page.textContent("#level-title")) !== "Plates open doors") fail(`${name}: first visit should start the lessons`);
@@ -1054,10 +1063,9 @@ async function fitScreens(browser, name, viewport, colorScheme) {
 
 // ── Likes (lab#17) ──────────────────────────────────────────────────────────
 // Every page talks to a mocked lab like API (never the live one), and may only
-// ask Afterstep's own origin and lab.brightloopapps.com/api/likes (plus the
-// Google Fonts stylesheet the page already loaded before likes).
+// ask Afterstep's own origin and lab.brightloopapps.com/api/likes. Afterstep
+// serves its own font (lab#36), so Google Fonts isn't allowed either.
 const LAB = "https://lab.brightloopapps.com";
-const FONTS = /^https:\/\/fonts\.(googleapis|gstatic)\.com\//;
 
 /** A stateful stand-in for the hub's /api/likes. `mode`: "ok", "resting" (what the
  *  live hub answers until its migration: 204 to a quiet GET, 503 otherwise),
@@ -1106,9 +1114,11 @@ async function mockLikes(page, opts = {}) {
 async function newPage(browser, opts, likes = {}) {
   const page = await browser.newPage(opts);
   const own = new URL(base).origin;
+  page.fonts = [];
   page.on("request", (r) => {
     const u = r.url();
-    if (u.startsWith("data:") || u.startsWith("blob:") || new URL(u).origin === own || FONTS.test(u)) return;
+    if (r.resourceType() === "font") page.fonts.push(u);
+    if (u.startsWith("data:") || u.startsWith("blob:") || new URL(u).origin === own) return;
     if (!u.startsWith(`${LAB}/api/likes`)) fail(`request to somewhere other than Afterstep and the like API: ${u}`);
   });
   page.likes = await mockLikes(page, likes);
