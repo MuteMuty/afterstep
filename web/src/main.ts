@@ -195,6 +195,8 @@ function render() {
 const MOVE_WORDS = ["move up", "move down", "move left", "move right", "wait a turn"];
 // The history the hint on screen was computed for, so a second press there isn't counted twice.
 let hintShownFor: string | null = null;
+// The first hint on a puzzle is a nudge about its idea, not a move. It never counts.
+let nudged = false;
 
 function clearHint() {
   hintShownFor = null;
@@ -212,7 +214,8 @@ function note(...parts: (string | Node)[]) {
 }
 
 /** Show the next move of a shortest win from here, or offer to undo back to
- *  the last position that can still be won. Hints never count as moves. */
+ *  the last position that can still be won. The first hint on a puzzle from a
+ *  winnable position is a nudge about the idea instead. Hints never count as moves. */
 function showHint() {
   if (!game || game.won() || win.open) return;
   const g = game;
@@ -220,7 +223,10 @@ function showHint() {
   if (hintShownFor === here) return;
   const h = g.hint();
   clearHint();
-  if (h >= 0 && h <= WAIT) {
+  if (h >= 0 && h <= WAIT && !nudged) {
+    nudged = true;
+    note(g.nudge());
+  } else if (h >= 0 && h <= WAIT) {
     hintShownFor = here;
     hintsUsed++;
     const [dx, dy] = DELTA[h];
@@ -308,6 +314,7 @@ function loadLevel(l: Level) {
   game?.free();
   game = new WasmGame(l.grid.join("\n"), l.delay);
   hintsUsed = 0;
+  nudged = false;
   buildBoard();
   if (mode === "learn") {
     title.textContent = l.name ?? "Lesson";

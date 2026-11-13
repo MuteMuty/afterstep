@@ -1,6 +1,6 @@
 //! Browser bindings. The web app keeps no game logic of its own: every move goes through here.
 
-use crate::{solver, Action, Game, Level};
+use crate::{nudge, solver, Action, Game, Level};
 use wasm_bindgen::prelude::*;
 
 /// States the hint search may explore (the hardest dailies need about 400k from the start).
@@ -95,6 +95,12 @@ impl WasmGame {
     /// Shortest solution from the start. Empty if none found.
     pub fn solve(&self) -> String {
         solver::solve(&self.game.level, 300_000).map(|s| s.moves).unwrap_or_default()
+    }
+
+    /// A short sentence about the puzzle's idea (who holds which plate, whether
+    /// the echo has to bump a door), read off its shortest solution from the start.
+    pub fn nudge(&self) -> String {
+        nudge::nudge(&self.game.level, HINT_LIMIT).text()
     }
 
     /// The next move from wherever the player is now: 0-4 is the action to take

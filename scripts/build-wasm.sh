@@ -25,6 +25,8 @@ export class WasmGame {
   load(moves: string): boolean;
   /** 0-4: next action; -n: lost, undo n moves; 5: won; 6: no answer. */
   hint(): number;
+  /** A short sentence about the puzzle's idea, for the first hint. */
+  nudge(): string;
   free(): void;
 }
 TS
