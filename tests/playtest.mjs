@@ -19,7 +19,14 @@
 // is no taller and the footer no lower than during play at 1280x900, 390x844
 // and 390x844 touch, and a fast double-tap on Next can't move in the next lesson.
 // Keys hint: from 320 to 480px without touch no line starts or ends with "·"
-// and no phrase breaks; one line at 1280px; hidden on a touch phone.
+// and no phrase breaks; one line at 1280px; hidden on a touch phone, and after
+// the first touch on a screen that reports a fine pointer (the d-pad shows).
+// Fit (lab#10): on touch phones at 360x640, 390x700 and 390x844 the lessons
+// are played by tapping the d-pad, and the board, status line, controls and
+// d-pad must be on screen without scrolling in every lesson and today's
+// puzzle; so too at 320x568 and in landscape (844x390, 667x375, board beside
+// the controls), also late in today's puzzle with the board's size unchanged.
+// Touch targets (nav, controls, d-pad) are at least 44px tall.
 // Likes (lab#17): every page uses a mocked lab like API and may ask nothing but
 // Afterstep and that API. Liking shows at once, survives a reload and unlikes
 // with the stored receipt (also days later); the win dialog's heart, 409 and
@@ -360,6 +367,21 @@ async function keysHint(browser, name) {
   await touch.waitForSelector(".cell", { timeout: 8000 }).catch(() => {});
   if ((await lines(touch)).visible) fail(`${name}: the keys hint should be hidden on a touch phone`);
   await touch.close();
+  // A touch screen that reports a fine pointer: the first touch swaps the keys
+  // hint for the d-pad (a mouse press doesn't).
+  const fine = await newPage(browser, { viewport: { width: 390, height: 844 } });
+  fine.on("pageerror", (e) => fail(`${name}: page error: ${e.message}`));
+  await fine.goto(base, { waitUntil: "networkidle" }).catch((e) => fail(`${name}: could not load ${base}: ${e.message}`));
+  await fine.waitForSelector(".cell", { timeout: 8000 }).catch(() => {});
+  const shown = () => fine.evaluate(() => ({ dpad: getComputedStyle(document.querySelector(".dpad")).display !== "none", keys: !!document.querySelector(".keys").offsetParent }));
+  const press = (pointerType) => fine.evaluate((pointerType) => document.querySelector("#board").dispatchEvent(new PointerEvent("pointerdown", { pointerType, bubbles: true })), pointerType);
+  await press("mouse");
+  let got = await shown();
+  if (got.dpad || !got.keys) fail(`${name}: a mouse press should keep the keys hint and no d-pad (${JSON.stringify(got)})`);
+  await press("touch");
+  got = await shown();
+  if (!got.dpad || got.keys) fail(`${name}: after a touch on a fine-pointer screen the d-pad should show and the keys hint hide (${JSON.stringify(got)})`);
+  await fine.close();
 }
 
 // Touch (phone): tapping controls works, keeps the page still, and leaves no
@@ -384,6 +406,9 @@ async function touchControls(browser, name, viewport) {
       overflow: c.scrollWidth > c.clientWidth,
     };
   });
+  const short = await page.evaluate(() => [...document.querySelectorAll(".top nav button, .controls button, .dpad button")]
+    .filter((b) => b.offsetParent && b.getBoundingClientRect().height < 44).map((b) => `${b.textContent} (${b.getBoundingClientRect().height}px)`));
+  if (short.length) fail(`${name}: touch targets under 44px tall: ${short.join(", ")}`);
   const withHint = await layout();
   await page.evaluate(() => (document.querySelector("#hint").style.display = "none"));
   const withoutHint = await layout();
@@ -690,6 +715,26 @@ async function hintFlow(browser, name, viewport) {
 // plate B: check it does, that the board and d-pad fit like lesson 4's, and
 // that its tip reads as one balanced block.
 const LESSONS = ["RRRRR", "RRLDDD", "RRRRLLLDUDDD", "RRLDDDDD", "RRLDDDDDR"];
+
+// The play screen's parts that must be on screen together on a phone (lab#10).
+const FIT = { board: "#board", status: ".status-row", controls: ".controls", dpad: ".dpad" };
+const playBoxes = (page) => page.evaluate((sel) => {
+  const out = { scrollY: window.scrollY, width: window.innerWidth, height: window.innerHeight };
+  for (const [k, s] of Object.entries(sel)) {
+    const b = document.querySelector(s).getBoundingClientRect();
+    out[k] = { left: b.left, top: b.top + window.scrollY, right: b.right, bottom: b.bottom + window.scrollY, width: b.width, height: b.height };
+  }
+  return out;
+}, FIT);
+/** Fails unless every part of the play screen is inside the viewport at scroll 0. */
+function expectFits(name, label, at) {
+  for (const k of Object.keys(FIT)) {
+    const b = at[k];
+    if (!b.height) fail(`${name}: ${label}: the ${k} isn't showing`);
+    else if (b.top < -0.5 || b.left < -0.5 || b.bottom > at.height + 0.5 || b.right > at.width + 0.5)
+      fail(`${name}: ${label}: the ${k} (${Math.round(b.left)},${Math.round(b.top)}-${Math.round(b.right)},${Math.round(b.bottom)}) is outside the ${at.width}x${at.height} screen`);
+  }
+}
 async function lessons(browser, name, viewport, colorScheme, touch) {
   const page = await newPage(browser, { viewport, colorScheme, hasTouch: touch, isMobile: touch });
   page.on("console", (m) => m.type() === "error" && fail(`${name}: console error: ${m.text()}`));
@@ -710,6 +755,13 @@ async function lessons(browser, name, viewport, colorScheme, touch) {
       cell: r(".cell").width,
     };
   });
+  // On a phone the board, status line, controls and d-pad fit the screen (lab#10).
+  const fits = async (label) => {
+    if (!touch) return;
+    const at = await playBoxes(page);
+    expectFits(name, label, at);
+    return at;
+  };
   let four, lowest = 0;
   for (const [i, sol] of LESSONS.entries()) {
     const n = i + 1;
@@ -717,6 +769,8 @@ async function lessons(browser, name, viewport, colorScheme, touch) {
     if (sub !== `Lesson ${n} of 5`) fail(`${name}: lesson ${n} should say "Lesson ${n} of 5", says "${sub}"`);
     const at = await layout();
     if (at.wide) fail(`${name}: lesson ${n} scrolls sideways`);
+    const fit = await fits(`lesson ${n}`);
+    if (fit) console.log(`${name}: lesson ${n} fits, d-pad ends at ${Math.round(fit.dpad.bottom)}px of ${viewport.height}, cells ${at.cell.toFixed(1)}px`);
     if (n === 4) four = at;
     if (n < 5) lowest = Math.max(lowest, at.dpad.bottom);
     if (n === 5) {
@@ -730,6 +784,7 @@ async function lessons(browser, name, viewport, colorScheme, touch) {
     }
     for (const [j, m] of [...sol].entries()) {
       await move(m);
+      if (j === sol.length - 2) await fits(`lesson ${n}, before its last move`);
       // Lesson 5: on move 7 the echo bumps door a and stays on plate B.
       if (n === 5 && j === 6) {
         const st = await page.evaluate(() => ({
@@ -782,6 +837,58 @@ async function lessons(browser, name, viewport, colorScheme, touch) {
   }
   await page.waitForFunction(() => document.querySelector("#level-title").textContent.startsWith("Puzzle "), null, { timeout: 4000 })
     .catch(() => fail(`${name}: "Play today's puzzle" after lesson 5 did not open today's puzzle`));
+  const fit = await fits("today's puzzle");
+  if (fit) {
+    console.log(`${name}: today's puzzle fits, d-pad ends at ${Math.round(fit.dpad.bottom)}px of ${viewport.height}`);
+    await page.screenshot({ path: join(out, `${name}-daily.png`) });
+  }
+  await page.close();
+}
+
+// Fit (lab#10): every lesson and today's puzzle, opened by link on a touch
+// phone, shows the board, status line, controls and d-pad without scrolling,
+// and still does late in today's puzzle (once the echo follows), with the
+// board the same size. In landscape the board sits beside the controls.
+async function fitScreens(browser, name, viewport, colorScheme) {
+  const page = await newPage(browser, { viewport, colorScheme, hasTouch: true, isMobile: true });
+  page.on("console", (m) => m.type() === "error" && fail(`${name}: console error: ${m.text()}`));
+  page.on("pageerror", (e) => fail(`${name}: page error: ${e.message}`));
+  const landscape = viewport.width > viewport.height;
+  // A returning player, so the bare URL opens today's puzzle rather than the lessons.
+  await page.addInitScript(() => location.protocol.startsWith("http") && localStorage.setItem("afterstep:v1", JSON.stringify({ learned: true, results: {} })));
+  for (const [label, hash] of [...LESSONS.map((_, i) => [`lesson ${i + 1}`, `#/learn/${i + 1}`]), ["today's puzzle", ""]]) {
+    await page.goto("about:blank");
+    await page.goto(`${base}/${hash}`, { waitUntil: "networkidle" }).catch((e) => fail(`${name}: could not load ${base}/${hash}: ${e.message}`));
+    if (!(await page.waitForSelector(".cell", { timeout: 8000 }).catch(() => null))) {
+      fail(`${name}: board never rendered for ${label}`);
+      continue;
+    }
+    const sub = await page.textContent("#level-sub");
+    if (hash ? sub !== `Lesson ${hash.at(-1)} of 5` : !(await page.textContent("#level-title")).startsWith("Puzzle ")) fail(`${name}: ${hash || "/"} opened "${sub}"`);
+    const at = await playBoxes(page);
+    expectFits(name, label, at);
+    if (landscape && at.board.right > Math.min(at.controls.left, at.dpad.left) + 0.5) fail(`${name}: ${label}: the board should sit beside the controls`);
+    if (await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)) fail(`${name}: ${label} scrolls sideways`);
+    if (label === "lesson 5") await page.screenshot({ path: join(out, `${name}-lesson5.png`) });
+    if (!hash) {
+      await page.screenshot({ path: join(out, `${name}-daily.png`) });
+      await play(page, level.solution.slice(0, -1));
+      await page.waitForTimeout(200);
+      const late = await playBoxes(page);
+      expectFits(name, "late in today's puzzle", late);
+      if (Math.abs(late.board.height - at.board.height) > 0.5) fail(`${name}: the board changed size during today's puzzle (${at.board.height}px -> ${late.board.height}px)`);
+      await page.screenshot({ path: join(out, `${name}-daily-late.png`) });
+      console.log(`${name}: everything fits; board ${Math.round(at.board.width)}x${Math.round(at.board.height)}, d-pad ends at ${Math.round(late.dpad.bottom)}px of ${viewport.height}`);
+    }
+  }
+  if (landscape) {
+    // Lesson 1, played by tapping the d-pad beside the board.
+    await page.goto("about:blank");
+    await page.goto(`${base}/#/learn/1`, { waitUntil: "networkidle" });
+    await page.waitForSelector(".cell");
+    for (let i = 0; i < 5; i++) await page.tap('.dpad [data-move="3"]');
+    if (!(await dialogOpens(page))) fail(`${name}: lesson 1 not solved by tapping Right five times`);
+  }
   await page.close();
 }
 
@@ -1166,6 +1273,10 @@ try {
   await hintFlow(browser, "desktop-hints", { width: 1280, height: 900 });
   await lessons(browser, "desktop-lessons-dark", { width: 1280, height: 900 }, "dark", false);
   await lessons(browser, "phone-lessons-light", { width: 390, height: 844 }, "light", true);
+  await lessons(browser, "phone-360-lessons-dark", { width: 360, height: 640 }, "dark", true);
+  await lessons(browser, "phone-700-lessons-light", { width: 390, height: 700 }, "light", true);
+  for (const [w, h] of [[360, 640], [390, 700], [390, 844], [320, 568], [844, 390], [667, 375]])
+    await fitScreens(browser, `fit-${w}x${h}`, { width: w, height: h }, w > h ? "dark" : "light");
 } finally {
   await browser.close();
 }

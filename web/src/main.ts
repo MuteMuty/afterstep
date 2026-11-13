@@ -101,8 +101,9 @@ function buildBoard() {
   h = level.grid.length;
   tiles = level.grid.join("").split("");
   start = tiles.indexOf("S");
-  board.style.setProperty("--cols", String(w));
-  board.style.setProperty("--rows", String(h));
+  // On the board's wrap, which sizes the board to the space left on short screens.
+  board.parentElement!.style.setProperty("--cols", String(w));
+  board.parentElement!.style.setProperty("--rows", String(h));
   board.replaceChildren();
   els.cells = tiles.map((c) => {
     const cell = document.createElement("div");
@@ -545,6 +546,12 @@ window.addEventListener("keydown", (e) => {
     takeUndoOffer();
   }
 });
+
+// Some touch screens report a fine pointer, which the stylesheet takes for a
+// mouse. The first touch shows the d-pad and hides the keys hint there too.
+addEventListener("pointerdown", (e) => {
+  if (e.pointerType === "touch") document.documentElement.classList.add("touch");
+}, { capture: true, passive: true });
 
 let touch: { x: number; y: number } | null = null;
 board.addEventListener("pointerdown", (e) => { touch = { x: e.clientX, y: e.clientY }; });
