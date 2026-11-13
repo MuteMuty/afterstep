@@ -1,18 +1,41 @@
 //! The first Hint press on a puzzle gives a nudge about its idea instead of a
 //! move. The nudge is read off the solver's shortest solution: which plates the
-//! echo holds while you go through their doors, which you hold yourself, and
-//! whether the echo has to bump into something on purpose (proven by finding no
-//! win at all where the echo never bumps). New puzzles get a nudge for free.
+//! echo holds while you go through their doors, which you hold yourself, and,
+//! when no win at all keeps the echo in step, what stops it first and why that
+//! helps. New puzzles get a nudge for free.
+//!
+//! Plates and doors are always named in full ("plate B", "door B"), and a stop
+//! is said in the lessons' words: a closed door stops your echo.
 
 use crate::solver::{solve, solve_in_step};
 use crate::{Action, Game, Level, Tile};
 
-/// What the echo bumps into when it falls out of step.
+/// The longest nudge, in characters: one line of the status row on a 320px
+/// phone, with room to spare for wider fonts (the playtest measures each one).
+pub const MAX_LEN: usize = 44;
+
+/// What stops the echo when it falls out of step.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Obstacle {
-    Door,
+    /// A closed door (letter 0 = A). The first stop is always one: the echo
+    /// follows your steps, and a door you went through can be closed by the
+    /// time it gets there.
+    Door(u8),
     Wall,
     Edge,
+}
+
+/// The echo's first stop, when every win needs one.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Bump {
+    /// What it walks into.
+    pub into: Obstacle,
+    /// The plate it stands on while stopped, if any.
+    pub on: Option<u8>,
+    /// The first plate it holds for you from the stop on, if any.
+    pub then_holds: Option<u8>,
+    /// Whether it already held that plate for you before the stop.
+    pub again: bool,
 }
 
 /// The idea of a puzzle, as read off its shortest solution.
@@ -23,9 +46,22 @@ pub struct Nudge {
     pub echo_holds: Vec<u8>,
     /// Plate letters you stand on yourself while stepping through their doors.
     pub you_hold: Vec<u8>,
-    /// The echo's first bump, when no win exists without one, and whether it
-    /// comes before the echo's first hold.
-    pub bump: Option<(Obstacle, bool)>,
+    /// The echo's first stop, when no win exists without one.
+    pub bump: Option<Bump>,
+}
+
+fn letter(l: u8) -> char {
+    (b'A' + l) as char
+}
+
+/// "plate A", "plates A and B", "plates A, B and C".
+fn plates(ls: &[u8]) -> String {
+    let names: Vec<String> = ls.iter().map(|&l| letter(l).to_string()).collect();
+    match names.split_last() {
+        Some((last, [])) => format!("plate {last}"),
+        Some((last, rest)) => format!("plates {} and {last}", rest.join(", ")),
+        None => String::new(),
+    }
 }
 
 impl Nudge {
@@ -34,39 +70,48 @@ impl Nudge {
         self.echo_holds.is_empty() && self.you_hold.is_empty() && self.bump.is_none()
     }
 
-    /// One short sentence, plain and in sentence case.
+    /// One short sentence, plain and in sentence case: the most specific one
+    /// that fits in `MAX_LEN` characters.
     pub fn text(&self) -> String {
-        let plates = |ls: &[u8], word: bool| {
-            let names: Vec<String> = ls.iter().map(|&l| ((b'A' + l) as char).to_string()).collect();
-            let list = match names.split_last() {
-                Some((last, [])) => last.clone(),
-                Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
-                None => String::new(),
+        let mut says: Vec<String> = Vec::new();
+        if let Some(b) = self.bump {
+            let what = match b.into {
+                Obstacle::Door(d) => format!("Door {}", letter(d)),
+                Obstacle::Wall => "A wall".to_string(),
+                Obstacle::Edge => "The edge".to_string(),
             };
-            match (word, ls.len()) {
-                (false, _) => list,
-                (true, 1) => format!("plate {list}"),
-                (true, _) => format!("plates {list}"),
+            match (b.on, b.then_holds) {
+                // It stays on the plate, so it keeps holding that door open.
+                (Some(p), Some(h)) if p == h => says.push(format!("{what} keeps your echo on {} for you.", plates(&[p]))),
+                // Out of step, it goes back to a plate it held before the stop.
+                (_, Some(h)) if b.again => says.push(format!("{what} puts your echo back on {}.", plates(&[h]))),
+                // Out of step, it is on a plate when you next need one.
+                (_, Some(h)) => says.push(format!("{what} stops your echo, so it holds {}.", plates(&[h]))),
+                _ => {}
             }
-        };
-        let bump = |o: Obstacle| match o {
-            Obstacle::Door => "bump a door",
-            Obstacle::Wall => "bump a wall",
-            Obstacle::Edge => "bump the edge",
-        };
-        match (&self.echo_holds[..], self.bump) {
-            ([], Some((o, _))) => format!("Make your echo {} on purpose.", bump(o)),
-            // Bump and hold in one line: only the first plate, so it stays short.
-            (h, Some((o, true))) => format!("Make your echo {}, then hold {}.", bump(o), plates(&h[..1], false)),
-            (h, Some((o, false))) => format!("Let your echo hold {}, then {}.", plates(&h[..1], false), bump(o)),
-            ([_], None) => format!("Let your echo hold {} for you.", plates(&self.echo_holds, true)),
-            (h @ [_, ..], None) => format!("Let your echo hold {}.", plates(h, true)),
-            ([], None) => match self.you_hold.len() {
-                0 => "Think ahead to where your echo will stand.".to_string(),
-                1 => format!("Stand on {} to open its door.", plates(&self.you_hold, true)),
-                _ => format!("Stand on {} to open their doors.", plates(&self.you_hold, true)),
-            },
+            says.push(match b.into {
+                Obstacle::Door(d) => format!("Door {} lets you pass but stops your echo.", letter(d)),
+                Obstacle::Wall => "Let a wall stop your echo on purpose.".to_string(),
+                Obstacle::Edge => "Let the edge stop your echo on purpose.".to_string(),
+            });
+        } else {
+            let (echo, you) = (&self.echo_holds[..], &self.you_hold[..]);
+            if !echo.is_empty() && !you.is_empty() {
+                says.push(format!("You hold {}, your echo holds {}.", plates(you), plates(echo)));
+            }
+            match (echo, you) {
+                ([_], _) => says.push(format!("Let your echo hold {} for you.", plates(echo))),
+                ([_, ..], _) => says.push(format!("Let your echo hold {}.", plates(echo))),
+                ([], [d]) => says.push(format!("Stand on {} to open door {}.", plates(you), letter(*d))),
+                ([], [_, ..]) => {
+                    says.push(format!("Stand on {} to open their doors.", plates(you)));
+                    says.push(format!("Stand on {} yourself.", plates(you)));
+                }
+                ([], []) => {}
+            }
         }
+        says.push("Think ahead to where your echo will stand.".to_string());
+        says.into_iter().find(|s| s.chars().count() <= MAX_LEN).unwrap()
     }
 }
 
@@ -75,9 +120,9 @@ impl Nudge {
 /// is the generic one.
 pub fn nudge(level: &Level, limit: usize) -> Nudge {
     let Some(sol) = solve(level, limit) else { return Nudge::default() };
-    // Only worth a second search if the shortest win bumps the echo at all.
+    // Only worth a second search if the shortest win stops the echo at all.
     let bumps = read(level, &sol.moves, true).bump.is_some();
-    // Out of budget proves nothing, so then the bump isn't mentioned.
+    // Out of budget proves nothing, so then the stop isn't mentioned.
     read(level, &sol.moves, bumps && matches!(solve_in_step(level, limit), Ok(None)))
 }
 
@@ -97,24 +142,34 @@ pub fn read(level: &Level, moves: &str, bump_needed: bool) -> Nudge {
         if !g.try_step(a) {
             break;
         }
+        // The echo's first stop: what it walked into and what it stands on.
+        if bump_needed && n.bump.is_none() && *g.echo_blocked.last().unwrap() {
+            let (e, ea) = (e.unwrap(), echo_action.unwrap());
+            let into = match level.neighbor(e, ea).map(|t| level.tiles[t]) {
+                None => Obstacle::Edge,
+                Some(Tile::Door(d)) => Obstacle::Door(d),
+                Some(_) => Obstacle::Wall,
+            };
+            let on = match level.tiles[e] {
+                Tile::Plate(l) => Some(l),
+                _ => None,
+            };
+            n.bump = Some(Bump { into, on, then_holds: None, again: false });
+        }
         // Stepping into a door: whose plate held it open?
         if let Tile::Door(d) = level.tiles[g.player] {
             if g.player != p {
                 if level.tiles[p] == Tile::Plate(d) {
                     add(&mut n.you_hold, d);
                 } else if e.map(|e| level.tiles[e]) == Some(Tile::Plate(d)) {
+                    if let Some(b) = n.bump.as_mut().filter(|b| b.then_holds.is_none()) {
+                        // Every plate it held so far was held before the stop.
+                        b.then_holds = Some(d);
+                        b.again = n.echo_holds.contains(&d);
+                    }
                     add(&mut n.echo_holds, d);
                 }
             }
-        }
-        if bump_needed && n.bump.is_none() && *g.echo_blocked.last().unwrap() {
-            let (e, ea) = (e.unwrap(), echo_action.unwrap());
-            let o = match level.neighbor(e, ea).map(|t| level.tiles[t]) {
-                None => Obstacle::Edge,
-                Some(Tile::Door(_)) => Obstacle::Door,
-                Some(_) => Obstacle::Wall,
-            };
-            n.bump = Some((o, n.echo_holds.is_empty()));
         }
     }
     n
@@ -144,16 +199,16 @@ mod tests {
         // Lesson 1: no echo in time, you stand on the plate and step through.
         let n = nudge(&lvl(&["S.Aa.E"], 6), 100_000);
         assert_eq!(n, Nudge { you_hold: vec![A], ..Nudge::default() });
-        assert_eq!(n.text(), "Stand on plate A to open its door.");
+        assert_eq!(n.text(), "Stand on plate A to open door A.");
     }
 
     #[test]
-    fn the_echo_hold_is_the_idea_when_you_hold_one_too() {
+    fn you_hold_one_plate_and_the_echo_another() {
         // Lesson 4: you hold A yourself, the echo holds B.
         let n = nudge(&lvl(&["S.B", "#A#", "#a#", "#.#", "#b#", "#E#"], 4), 100_000);
         assert_eq!(n.echo_holds, vec![B]);
         assert_eq!(n.you_hold, vec![A]);
-        assert_eq!(n.text(), "Let your echo hold plate B for you.");
+        assert_eq!(n.text(), "You hold plate A, your echo holds plate B.");
     }
 
     #[test]
@@ -166,16 +221,29 @@ mod tests {
     }
 
     #[test]
+    fn a_door_that_keeps_the_echo_on_its_plate() {
+        // Lesson 5: you go through door A off plate A; 2 moves later the echo
+        // follows from plate B, door A is closed by then, so it stays on B
+        // while you go through door B.
+        let n = nudge(&lvl(&["S.A", "#B#", "#a#", "#.#", "#.#", "#bE"], 2), 100_000);
+        assert_eq!(n.bump, Some(Bump { into: Obstacle::Door(A), on: Some(B), then_holds: Some(B), again: false }));
+        assert_eq!(n.text(), "Door A keeps your echo on plate B for you.");
+    }
+
+    #[test]
     fn a_bump_is_only_mentioned_when_every_win_needs_one() {
         // Daily 2026-11-13 (stored solution LLLRRUUUD.R.RDRD): no win keeps the
-        // echo in step, and the echo holds B before it first bumps a door.
+        // echo in step. The echo holds B, then stands on A for you when it
+        // tries to follow you into door B, closed by then.
         let (rows, k) = read_level(&format!("{}/../levels/daily/2026-11-13.json", env!("CARGO_MANIFEST_DIR")));
         let l = lvl(&rows.iter().map(String::as_str).collect::<Vec<_>>(), k);
         assert!(matches!(solve_in_step(&l, 3_000_000), Ok(None)));
         let n = nudge(&l, 3_000_000);
-        assert_eq!(n.bump, Some((Obstacle::Door, false)));
-        assert_eq!(n.echo_holds[0], B);
-        assert_eq!(read(&l, "LLLRRUUUD.R.RDRD", true).bump, Some((Obstacle::Door, false)));
+        let stop = Bump { into: Obstacle::Door(B), on: Some(A), then_holds: Some(A), again: false };
+        assert_eq!(n.bump, Some(stop));
+        assert_eq!(n.echo_holds, vec![B, A]);
+        assert_eq!(n.text(), "Door B keeps your echo on plate A for you.");
+        assert_eq!(read(&l, "LLLRRUUUD.R.RDRD", true).bump, Some(stop));
         // The same solution read as if a bump-free win existed says nothing about bumps.
         assert_eq!(read(&l, "LLLRRUUUD.R.RDRD", false).bump, None);
         // With too small a budget nothing can be read off, so the nudge is generic.
@@ -183,18 +251,81 @@ mod tests {
     }
 
     #[test]
+    fn a_door_that_stops_the_echo_before_it_holds_a_plate() {
+        // Daily 2026-12-04 (DDUUDLDRRRULRDLLLLLU): the echo holds B, follows you
+        // into door B once it's closed and stops off any plate; out of step, it
+        // then holds A for you.
+        let (rows, k) = read_level(&format!("{}/../levels/daily/2026-12-04.json", env!("CARGO_MANIFEST_DIR")));
+        let l = lvl(&rows.iter().map(String::as_str).collect::<Vec<_>>(), k);
+        let n = read(&l, "DDUUDLDRRRULRDLLLLLU", true);
+        assert_eq!(n.bump, Some(Bump { into: Obstacle::Door(B), on: None, then_holds: Some(A), again: false }));
+        assert_eq!(n.text(), "Door B stops your echo, so it holds plate A.");
+    }
+
+    #[test]
+    fn a_door_that_puts_the_echo_back_on_a_plate_it_held_before() {
+        // Daily 2026-11-11 (DDLLDUUD.LDDRUULLLULU): the echo holds B while you
+        // go through door B, follows you into door B once it's closed and stops
+        // off any plate; out of step, it then holds B for you again.
+        let (rows, k) = read_level(&format!("{}/../levels/daily/2026-11-11.json", env!("CARGO_MANIFEST_DIR")));
+        let l = lvl(&rows.iter().map(String::as_str).collect::<Vec<_>>(), k);
+        let n = read(&l, "DDLLDUUD.LDDRUULLLULU", true);
+        assert_eq!(n.bump, Some(Bump { into: Obstacle::Door(B), on: None, then_holds: Some(B), again: true }));
+        assert_eq!(n.text(), "Door B puts your echo back on plate B.");
+        // The nudge from its shortest solution says the same.
+        assert_eq!(nudge(&l, 3_000_000).text(), "Door B puts your echo back on plate B.");
+    }
+
+    #[test]
     fn texts_for_every_shape() {
         let t = |echo_holds: Vec<u8>, you_hold: Vec<u8>, bump| Nudge { echo_holds, you_hold, bump }.text();
+        let stop = |into, on, then_holds| Some(Bump { into, on, then_holds, again: false });
+        let back = |into, on, then_holds| Some(Bump { into, on, then_holds, again: true });
+        const C: u8 = 2;
+        // Who holds what.
         assert_eq!(t(vec![A, B], vec![], None), "Let your echo hold plates A and B.");
-        assert_eq!(t(vec![0, 1, 2], vec![], None), "Let your echo hold plates A, B and C.");
+        assert_eq!(t(vec![A, B, C], vec![], None), "Let your echo hold plates A, B and C.");
+        assert_eq!(t(vec![B], vec![A], None), "You hold plate A, your echo holds plate B.");
+        // Too long for one line on a phone: the echo's part is the idea.
+        assert_eq!(t(vec![B, C], vec![A], None), "Let your echo hold plates B and C.");
         assert_eq!(t(vec![], vec![A, B], None), "Stand on plates A and B to open their doors.");
-        assert_eq!(t(vec![], vec![], Some((Obstacle::Door, true))), "Make your echo bump a door on purpose.");
-        assert_eq!(t(vec![], vec![A], Some((Obstacle::Wall, true))), "Make your echo bump a wall on purpose.");
-        assert_eq!(t(vec![], vec![], Some((Obstacle::Edge, true))), "Make your echo bump the edge on purpose.");
-        assert_eq!(t(vec![B], vec![], Some((Obstacle::Door, false))), "Let your echo hold B, then bump a door.");
-        assert_eq!(t(vec![B], vec![], Some((Obstacle::Door, true))), "Make your echo bump a door, then hold B.");
-        assert_eq!(t(vec![A, B], vec![], Some((Obstacle::Wall, false))), "Let your echo hold A, then bump a wall.");
-        assert_eq!(t(vec![B, A], vec![], Some((Obstacle::Door, true))), "Make your echo bump a door, then hold B.");
+        assert_eq!(t(vec![], vec![A, B, C], None), "Stand on plates A, B and C yourself.");
+        // The echo stopped on a plate it then holds for you.
+        assert_eq!(t(vec![A], vec![], stop(Obstacle::Door(B), Some(A), Some(A))), "Door B keeps your echo on plate A for you.");
+        assert_eq!(t(vec![C], vec![], stop(Obstacle::Wall, Some(C), Some(C))), "A wall keeps your echo on plate C for you.");
+        assert_eq!(t(vec![C], vec![], stop(Obstacle::Edge, Some(C), Some(C))), "The edge keeps your echo on plate C for you.");
+        // Stopped off a plate (or on one it doesn't hold for you), then it holds another.
+        assert_eq!(t(vec![B, A], vec![], stop(Obstacle::Door(B), None, Some(A))), "Door B stops your echo, so it holds plate A.");
+        assert_eq!(t(vec![B, C], vec![], stop(Obstacle::Door(C), Some(B), Some(C))), "Door C stops your echo, so it holds plate C.");
+        assert_eq!(t(vec![A], vec![], stop(Obstacle::Wall, None, Some(A))), "A wall stops your echo, so it holds plate A.");
+        // Stopped, then it holds a plate it already held before the stop.
+        assert_eq!(t(vec![B], vec![], back(Obstacle::Door(B), None, Some(B))), "Door B puts your echo back on plate B.");
+        assert_eq!(t(vec![B, A], vec![], back(Obstacle::Door(B), Some(A), Some(B))), "Door B puts your echo back on plate B.");
+        assert_eq!(t(vec![C], vec![], back(Obstacle::Wall, None, Some(C))), "A wall puts your echo back on plate C.");
+        assert_eq!(t(vec![C], vec![], back(Obstacle::Edge, None, Some(C))), "The edge puts your echo back on plate C.");
+        // Stopped on the plate it then holds: it never left, so "keeps" wins.
+        assert_eq!(t(vec![A], vec![], back(Obstacle::Door(B), Some(A), Some(A))), "Door B keeps your echo on plate A for you.");
+        // Stopped, and nothing held after: what the door does.
+        assert_eq!(t(vec![B], vec![], stop(Obstacle::Door(B), None, None)), "Door B lets you pass but stops your echo.");
+        assert_eq!(t(vec![], vec![], stop(Obstacle::Door(A), None, None)), "Door A lets you pass but stops your echo.");
+        assert_eq!(t(vec![], vec![A], stop(Obstacle::Wall, None, None)), "Let a wall stop your echo on purpose.");
+        assert_eq!(t(vec![], vec![], stop(Obstacle::Edge, None, None)), "Let the edge stop your echo on purpose.");
+        // Every shape, with any letters, fits one line on a 320px phone.
+        let all = (0..8u8).flat_map(|x| {
+            let o = [Obstacle::Door(x), Obstacle::Wall, Obstacle::Edge];
+            o.into_iter().flat_map(move |o| [stop(o, Some(x), Some(x)), stop(o, None, Some(x)), back(o, None, Some(x)), back(o, Some(x), Some(x)), stop(o, None, None), None])
+        });
+        for b in all {
+            for (e, y) in [(vec![], vec![]), (vec![7], vec![]), (vec![5, 6, 7], vec![]), (vec![7], vec![6]), (vec![], vec![5, 6, 7]), (vec![4, 5, 6, 7], vec![3])] {
+                let s = t(e.clone(), y.clone(), b);
+                assert!(s.chars().count() <= MAX_LEN, "{s:?} is over {MAX_LEN} characters");
+                assert!(!s.contains(" bump") && !s.contains(" hold B") && s.ends_with('.'), "{s:?}");
+                // Never "Door B stops your echo, so it holds plate B." when it held B before.
+                if b.is_some_and(|b| b.again && b.on != b.then_holds) {
+                    assert!(s.contains(" back on plate "), "{s:?}");
+                }
+            }
+        }
     }
 
     /// Every lesson and daily in `levels/` gets a short nudge that matches its
@@ -213,7 +344,8 @@ mod tests {
             files.extend(names);
         }
         assert!(files.len() >= 5, "levels not found under {root}");
-        let (mut generic, mut bumps) = (Vec::new(), 0);
+        let (mut generic, mut bumps, mut agains) = (Vec::new(), 0, Vec::new());
+        let (mut sentences, mut daily_sentences) = (std::collections::BTreeSet::new(), std::collections::BTreeSet::new());
         for f in &files {
             let (rows, k) = read_level(f);
             let l = lvl(&rows.iter().map(String::as_str).collect::<Vec<_>>(), k);
@@ -223,17 +355,29 @@ mod tests {
             let name = f.rsplit('/').next().unwrap();
             println!("{name}: {text}");
             assert!(!text.is_empty() && text.ends_with('.'), "{f}: {text:?}");
-            // Fits on one line of a 390px phone.
-            assert!(text.chars().count() <= 44, "{f}: nudge too long: {text:?}");
+            // Fits on one line of a 320px phone (the playtest measures it there).
+            assert!(text.chars().count() <= MAX_LEN, "{f}: nudge too long: {text:?}");
+            sentences.insert(text.clone());
+            if f.contains("/daily/") {
+                daily_sentences.insert(text.clone());
+            }
             assert_eq!(text.chars().next().map(char::is_uppercase), Some(true), "{f}: sentence case");
 
             // Replay the solution and record, independently, who holds what.
             let mut g = Game::new(l.clone());
+            // Also where the echo first gets stopped: the tile it tried to enter,
+            // the tile it stayed on, and every plate it holds for you from then on.
             let (mut echo_holds, mut you_hold, mut blocked) = (Vec::new(), Vec::new(), false);
-            for c in sol.chars() {
+            let (mut first_stop, mut held_after, mut held_before) = (None, Vec::new(), Vec::new());
+            for (i, c) in sol.chars().enumerate() {
                 let a = Action::from_char(c).unwrap();
                 let (p, e) = (g.player, g.echo);
                 assert!(g.try_step(a));
+                if *g.echo_blocked.last().unwrap() && !blocked {
+                    let e = e.unwrap();
+                    let tried = l.neighbor(e, g.history[i - k]).map(|t| l.tiles[t]);
+                    first_stop = Some((tried, l.tiles[e]));
+                }
                 blocked |= *g.echo_blocked.last().unwrap();
                 if let Tile::Door(d) = l.tiles[g.player] {
                     if g.player != p {
@@ -241,6 +385,11 @@ mod tests {
                             you_hold.push(d);
                         } else if e.map(|e| l.tiles[e]) == Some(Tile::Plate(d)) {
                             echo_holds.push(d);
+                            if blocked {
+                                held_after.push(d);
+                            } else {
+                                held_before.push(d);
+                            }
                         }
                     }
                 }
@@ -254,9 +403,26 @@ mod tests {
             if !echo_holds.is_empty() {
                 assert!(!n.echo_holds.is_empty(), "{f}: the echo holds {echo_holds:?} in {sol}, nudge misses it");
             }
-            if n.bump.is_some() {
+            if let Some(b) = n.bump {
                 bumps += 1;
                 assert!(blocked, "{f}: says the echo bumps but {sol} never blocks it");
+                let (tried, stood) = first_stop.unwrap();
+                let into = match tried {
+                    None => Obstacle::Edge,
+                    Some(Tile::Door(d)) => Obstacle::Door(d),
+                    Some(_) => Obstacle::Wall,
+                };
+                assert_eq!(b.into, into, "{f}: names the wrong thing that stops the echo in {sol}");
+                if let Some(p) = b.on {
+                    assert_eq!(stood, Tile::Plate(p), "{f}: says the echo stops on plate {p} in {sol}");
+                }
+                assert_eq!(b.then_holds, held_after.first().copied(), "{f}: the plate the echo holds after it stops, in {sol}");
+                let again = held_after.first().is_some_and(|h| held_before.contains(h));
+                assert_eq!(b.again, again, "{f}: whether the echo held plate {:?} before it stopped, in {sol}", b.then_holds);
+                if again && b.on != b.then_holds {
+                    agains.push(name.to_string());
+                    assert!(text.contains(" back on plate "), "{f}: the echo holds that plate again, the nudge should say so: {text:?}");
+                }
                 assert!(matches!(solve_in_step(&l, 3_000_000), Ok(None)), "{f}: says a bump is needed but a bump-free win exists");
             }
             if n.is_generic() {
@@ -264,6 +430,11 @@ mod tests {
             }
         }
         println!("nudges: {} levels, {} with a bump, {} generic {:?}", files.len(), bumps, generic.len(), generic);
+        println!("back on a plate it held before the stop: {} {:?}", agains.len(), agains);
+        // Before lab#29 the 30 levels used 6 sentences, the 25 dailies 3
+        // (17 of them "Let your echo hold B, then bump a door.").
+        println!("distinct nudges: {} across {} levels (6 before), {} across the dailies (3 before)", sentences.len(), files.len(), daily_sentences.len());
+        assert!(sentences.len() >= 8 && daily_sentences.len() > 3, "nudges should be more specific than before lab#29: {sentences:?}");
         assert!(generic.len() * 5 <= files.len(), "too many generic nudges: {generic:?}");
     }
 

@@ -1,1 +1,1 @@
-{"id": "t5", "name": "Out of step", "tip": "A closed door stops your echo. Keep it on B.", "needsBump": true, "delay": 2, "grid": ["S.A", "#B#", "#a#", "#.#", "#.#", "#bE"]}
+{"id": "t5", "name": "Out of step", "tip": "A closed door stops your echo. Keep it on plate B.", "needsBump": true, "delay": 2, "grid": ["S.A", "#B#", "#a#", "#.#", "#.#", "#bE"]}

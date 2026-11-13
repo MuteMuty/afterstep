@@ -1,1 +1,1 @@
-{"id": "t4", "name": "Two doors", "tip": "You hold plate A yourself. Your echo holds B.", "delay": 4, "grid": ["S.B", "#A#", "#a#", "#.#", "#b#", "#E#"]}
+{"id": "t4", "name": "Two doors", "tip": "You hold plate A yourself. Your echo holds plate B.", "delay": 4, "grid": ["S.B", "#A#", "#a#", "#.#", "#b#", "#E#"]}

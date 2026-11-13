@@ -9,12 +9,14 @@
 // hints through lesson 5 (the echo bump). On today's puzzle and a past one each
 // hint counts as a move (lab#25): no "Perfect" or star at par, "with N hints"
 // in the dialog, copied result, solved line and Past puzzles, and today's count
-// is kept after How to play and back, a reload and Start over. A save from
+// is kept after How to play and back, a reload and Start over. Each of those
+// gives the nudge again on the next first press, free (lab#29). A save from
 // before hints counted still shows as it did, and a worse hinted solve doesn't
 // replace it. On the touch
 // phone, today's nudge fits on one line. Lessons: all five are played in a row
 // by keyboard (desktop, dark) and by tapping the d-pad (phone, light), checking
-// "Lesson n of 5", where each win dialog leads, and that lesson 5 fits.
+// "Lesson n of 5", where each win dialog leads, that lesson 5 fits, and that
+// lessons 4 and 5's tips name plates in full ("plate B", lab#29).
 // Solved state: hidden while the win dialog is open; after it closes (Escape), a
 // solved line with Copy result and Next stays (the result in the status line's
 // place, the buttons in the keys hint's or d-pad's), keys nudge it, Tab reaches
@@ -30,6 +32,9 @@
 // d-pad must be on screen without scrolling in every lesson and today's
 // puzzle; so too at 320x568 and in landscape (844x390, 667x375, board beside
 // the controls), also late in today's puzzle with the board's size unchanged.
+// Nudges (lab#29): at each of those sizes today's nudge, shown by tapping Hint,
+// and every lesson's and daily's nudge (from the engine build the page uses)
+// fit the status line on one line with room to spare.
 // Touch targets (nav, controls, d-pad) are at least 44px tall.
 // Likes (lab#17): every page uses a mocked lab like API and may ask nothing but
 // Afterstep and that API. Liking shows at once, survives a reload and unlikes
@@ -51,7 +56,7 @@
 // Exit:  0 = pass, 1 = fail (reasons printed)
 import { chromium } from "playwright";
 import { readFileSync, readdirSync, mkdirSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { join, dirname } from "node:path";
 
 const base = process.argv[2];
@@ -69,6 +74,22 @@ const pad = (n) => String(n).padStart(2, "0");
 const now = new Date();
 const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 const level = JSON.parse(readFileSync(join(repo, "levels/daily", `${today}.json`), "utf8"));
+
+// Every lesson's and daily's nudge, from the engine build the page is served from.
+const nudges = await (async () => {
+  const { initSync, WasmGame } = await import(pathToFileURL(join(repo, "web/src/wasm/afterstep_engine.js")).href);
+  initSync({ module: readFileSync(join(repo, "web/src/wasm/afterstep_engine_bg.wasm")) });
+  const out = {};
+  for (const dir of ["tutorial", "daily"]) {
+    for (const f of readdirSync(join(repo, "levels", dir)).filter((f) => f.endsWith(".json")).sort()) {
+      const l = JSON.parse(readFileSync(join(repo, "levels", dir, f), "utf8"));
+      const g = new WasmGame(l.grid.join("\n"), l.delay);
+      out[`${dir}/${f.replace(".json", "")}`] = g.nudge();
+      g.free();
+    }
+  }
+  return out;
+})();
 
 const failures = [];
 const fail = (msg) => failures.push(msg);
@@ -440,7 +461,7 @@ async function touchControls(browser, name, viewport) {
     if (ring) fail(`${name}: tapping ${sel} left a focus ring on the board`);
     if (kind === "nudge") {
       const text = await page.textContent("#hint-note");
-      if (text !== "Stand on plate A to open its door.") fail(`${name}: first Hint tap in lesson 1 should nudge, got "${text}"`);
+      if (text !== "Stand on plate A to open door A.") fail(`${name}: first Hint tap in lesson 1 should nudge, got "${text}"`);
       if (await page.isVisible("#board .hint-mark")) fail(`${name}: a nudge should not mark a move`);
       if ((await layout()).dpad !== withHint.dpad) fail(`${name}: showing a nudge moved the d-pad`);
       await page.screenshot({ path: join(out, `${name}-nudge.png`) });
@@ -566,7 +587,7 @@ async function hintFlow(browser, name, viewport) {
   };
 
   const echoA = "Let your echo hold plate A for you.";
-  for (const [lesson, best, nudge] of [[1, 5, "Stand on plate A to open its door."], [2, 6, echoA], [3, 12, echoA]]) {
+  for (const [lesson, best, nudge] of [[1, 5, "Stand on plate A to open door A."], [2, 6, echoA], [3, 12, echoA]]) {
     await expectNudge(`lesson ${lesson}`, nudge);
     if (!(await followHints(`lesson ${lesson}`))) {
       fail(`${name}: following hints did not solve lesson ${lesson}`);
@@ -623,7 +644,7 @@ async function hintFlow(browser, name, viewport) {
   await page.keyboard.press("KeyU");
   if ((await moves()) !== 7) fail(`${name}: U a second time should do nothing, moves ${await moves()}`);
   // The position after the undo can be won: the nudge, then hints solve it.
-  await expectNudge("lesson 4 after the undo", "Let your echo hold plate B for you.");
+  await expectNudge("lesson 4 after the undo", "You hold plate A, your echo holds plate B.");
   await page.screenshot({ path: join(out, `${name}-nudge.png`) });
   if (!(await followHints("lesson 4"))) {
     fail(`${name}: following hints after the undo did not solve lesson 4`);
@@ -631,8 +652,9 @@ async function hintFlow(browser, name, viewport) {
   }
   await page.click("#next"); // "Next lesson"
 
-  // Lesson 5: the nudge names the bump, and hints solve it in its shortest 9 moves.
-  await expectNudge("lesson 5", "Let your echo hold A, then bump a door.");
+  // Lesson 5: the nudge names the door that stops the echo and why, and hints
+  // solve it in its shortest 9 moves.
+  await expectNudge("lesson 5", "Door A keeps your echo on plate B for you.");
   if (!(await followHints("lesson 5"))) {
     fail(`${name}: following hints did not solve lesson 5`);
     return page.close();
@@ -647,7 +669,7 @@ async function hintFlow(browser, name, viewport) {
   const onToday = () => page.waitForFunction((t) => !document.querySelector(".play").hidden && document.querySelector("#level-title").textContent === t, `Puzzle ${level.id}`);
   await onToday();
   await play(page, level.solution.slice(0, -1));
-  await expectNudge("today's puzzle");
+  await expectNudge("today's puzzle", nudges[`daily/${today}`]);
   await page.click("#hint");
   await page.keyboard.press("KeyH");
   const last = level.solution.at(-1);
@@ -657,18 +679,30 @@ async function hintFlow(browser, name, viewport) {
   await page.screenshot({ path: join(out, `${name}-daily-hint.png`) });
 
   // Leaving and coming back, a reload and Start over all keep the hint: the
-  // puzzle starts again at move 1, and the next H is a hint, not the nudge again.
+  // puzzle starts again at move 1. Each way back to the start gives the nudge
+  // first, free (lab#29), and the H after that is a counted hint.
   await page.click('[data-nav="learn"]');
   await page.waitForFunction(() => document.querySelector("#level-title").textContent.startsWith("Plates"));
   await page.click('[data-nav="today"]');
   await onToday();
   if ((await moves()) !== 1) fail(`${name}: after How to play and back to Today the hint should still count (moves ${await moves()}, wanted 1)`);
+  await expectNudge("today's puzzle after How to play and back", nudges[`daily/${today}`]);
+  if ((await moves()) !== 1) fail(`${name}: the nudge after How to play and back should be free (moves ${await moves()}, wanted 1)`);
   await page.reload({ waitUntil: "networkidle" });
   await onToday();
   if ((await moves()) !== 1) fail(`${name}: after a reload the hint should still count (moves ${await moves()}, wanted 1)`);
+  await expectNudge("today's puzzle after a reload", nudges[`daily/${today}`]);
+  if ((await moves()) !== 1) fail(`${name}: the nudge after a reload should be free (moves ${await moves()}, wanted 1)`);
   await play(page, level.solution[0]);
   await page.click("#restart");
   if ((await moves()) !== 1) fail(`${name}: after Start over the hint should still count (moves ${await moves()}, wanted 1)`);
+  await expectNudge("today's puzzle after Start over", nudges[`daily/${today}`]);
+  if ((await moves()) !== 1) fail(`${name}: the nudge after Start over should be free (moves ${await moves()}, wanted 1)`);
+  await page.screenshot({ path: join(out, `${name}-daily-nudge-after-start-over.png`) });
+  // Start over again right after it: the nudge again, still free.
+  await page.click("#restart");
+  await expectNudge("today's puzzle after a second Start over", nudges[`daily/${today}`]);
+  if ((await moves()) !== 1) fail(`${name}: the nudge after a second Start over should be free (moves ${await moves()}, wanted 1)`);
   await play(page, level.solution.slice(0, -1));
   await page.keyboard.press("KeyH");
   if (!(await noteText()).startsWith("Hint: ")) fail(`${name}: back on today's puzzle with a hint used, H should hint a move, got "${await noteText()}"`);
@@ -858,11 +892,15 @@ async function lessons(browser, name, viewport, colorScheme, touch) {
     if (at.wide) fail(`${name}: lesson ${n} scrolls sideways`);
     const fit = await fits(`lesson ${n}`);
     if (fit) console.log(`${name}: lesson ${n} fits, d-pad ends at ${Math.round(fit.dpad.bottom)}px of ${viewport.height}, cells ${at.cell.toFixed(1)}px`);
-    if (n === 4) four = at;
+    if (n === 4) {
+      four = at;
+      // Tips name plates in full, like the nudges (lab#29).
+      if ((await page.textContent("#tip")) !== "You hold plate A yourself. Your echo holds plate B.") fail(`${name}: lesson 4 tip should name plate B in full, says "${await page.textContent("#tip")}"`);
+    }
     if (n < 5) lowest = Math.max(lowest, at.dpad.bottom);
     if (n === 5) {
       if ((await page.textContent("#level-title")) !== "Out of step") fail(`${name}: lesson 5 should be "Out of step"`);
-      if ((await page.textContent("#tip")) !== "A closed door stops your echo. Keep it on B.") fail(`${name}: lesson 5 tip should explain the bump`);
+      if ((await page.textContent("#tip")) !== "A closed door stops your echo. Keep it on plate B.") fail(`${name}: lesson 5 tip should explain the bump, naming plate B in full`);
       if (at.board.right > viewport.width || at.board.left < 0 || at.dpad.right > viewport.width) fail(`${name}: lesson 5 board or d-pad is off screen`);
       if (at.board.height !== four.board.height || at.cell !== four.cell) fail(`${name}: lesson 5 board (${at.board.height}px, cells ${at.cell}px) should match lesson 4's (${four.board.height}px, ${four.cell}px)`);
       if (at.dpad.bottom > lowest + 0.5) fail(`${name}: lesson 5's d-pad ends at ${at.dpad.bottom}px, lower than any other lesson's (${lowest}px)`);
@@ -932,6 +970,40 @@ async function lessons(browser, name, viewport, colorScheme, touch) {
   await page.close();
 }
 
+// Nudges (lab#29): tapping Hint on today's puzzle shows its nudge, and it and
+// every other level's nudge, put in the same place, fit the status line on one
+// line with 6% of it to spare (for wider system fonts), without moving the
+// d-pad or scrolling sideways.
+async function nudgesFit(page, name) {
+  const dpad = () => page.evaluate(() => document.querySelector(".dpad").getBoundingClientRect().top + window.scrollY);
+  const before = await dpad();
+  await page.tap("#hint");
+  await page.waitForSelector("#hint-note:not([hidden])");
+  const real = await page.textContent("#hint-note");
+  if (real !== nudges[`daily/${today}`]) fail(`${name}: tapping Hint on today's puzzle should show its nudge "${nudges[`daily/${today}`]}", got "${real}"`);
+  await page.screenshot({ path: join(out, `${name}-daily-nudge.png`) });
+  const sizes = await page.evaluate((texts) => {
+    const n = document.querySelector("#hint-note"), s = document.querySelector(".status");
+    const shown = n.textContent;
+    const rows = texts.map(([key, text]) => {
+      n.textContent = text;
+      const r = n.getBoundingClientRect(), t = document.createRange();
+      t.selectNodeContents(n);
+      const w = t.getBoundingClientRect();
+      return { key, text, textW: w.width, lines: w.height < 2 * parseFloat(getComputedStyle(n).fontSize) ? 1 : 2, inside: w.left >= r.left - 0.5 && w.right <= r.right + 0.5, wide: document.documentElement.scrollWidth > window.innerWidth };
+    });
+    n.textContent = shown;
+    return { statusW: s.clientWidth, rows };
+  }, Object.entries(nudges));
+  const longest = sizes.rows.reduce((a, b) => (b.textW > a.textW ? b : a));
+  for (const r of sizes.rows) {
+    if (r.lines !== 1 || !r.inside || r.wide || r.textW > sizes.statusW * 0.94)
+      fail(`${name}: the nudge for ${r.key} "${r.text}" should fit one line with 6% to spare: ${Math.round(r.textW)}px of ${sizes.statusW}px (${r.lines} lines${r.wide ? ", page scrolls sideways" : ""})`);
+  }
+  if ((await dpad()) !== before) fail(`${name}: today's nudge moved the d-pad`);
+  console.log(`${name}: ${sizes.rows.length} nudges fit; longest "${longest.text}" (${longest.key}) ${Math.round(longest.textW)}px of ${sizes.statusW}px`);
+}
+
 // Fit (lab#10): every lesson and today's puzzle, opened by link on a touch
 // phone, shows the board, status line, controls and d-pad without scrolling,
 // and still does late in today's puzzle (once the echo follows), with the
@@ -959,6 +1031,7 @@ async function fitScreens(browser, name, viewport, colorScheme) {
     if (label === "lesson 5") await page.screenshot({ path: join(out, `${name}-lesson5.png`) });
     if (!hash) {
       await page.screenshot({ path: join(out, `${name}-daily.png`) });
+      await nudgesFit(page, name);
       await play(page, level.solution.slice(0, -1));
       await page.waitForTimeout(200);
       const late = await playBoxes(page);
