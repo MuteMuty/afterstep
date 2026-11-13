@@ -294,7 +294,15 @@ button.hinted { border-color: var(--sun); box-shadow: 0 0 0 3px var(--sun-glow);
 .dpad [data-move="2"] { grid-column: 1; grid-row: 2; }
 .dpad [data-move="1"] { grid-column: 2; grid-row: 2; }
 .dpad [data-move="3"] { grid-column: 3; grid-row: 2; }
-.keys { text-align: center; color: var(--ink-dim); font-size: 0.85rem; margin-top: 1rem; text-wrap: balance; }
+.keys { text-align: center; color: var(--ink-dim); font-size: 0.85rem; margin-top: 1rem; text-wrap: balance; container-type: inline-size; }
+/* A phrase ("Z undoes") never breaks. Where the whole hint might not fit on one
+   line (it needs about 33em), it splits into its two halves, one per line, so
+   no line starts or ends with "·". */
+.keys-half > span { white-space: nowrap; }
+@container (width < 36em) {
+  .keys-half { display: block; }
+  .keys-join { display: none; }
+}
 @media (pointer: coarse) {
   .dpad { display: grid; }
   .keys, .hint-key { display: none; }

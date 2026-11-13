@@ -18,6 +18,8 @@
 // puzzles shows it again from the saved best (an unsolved one doesn't). The page
 // is no taller and the footer no lower than during play at 1280x900, 390x844
 // and 390x844 touch, and a fast double-tap on Next can't move in the next lesson.
+// Keys hint: from 320 to 480px without touch no line starts or ends with "·"
+// and no phrase breaks; one line at 1280px; hidden on a touch phone.
 //
 // Usage: node tests/playtest.mjs <baseUrl>
 // Env:   PLAYTEST_BROWSER  Chromium-based browser executable (default: Brave)
@@ -296,6 +298,54 @@ async function keyboardStart(browser, name, viewport) {
     if ((await moves()) !== before + 2) fail(`${name}: Arrow key after clicking ${id} should move one step`);
   }
   await page.close();
+}
+
+// Keys hint (mouse or keyboard): from 320 to 480px no line starts or ends with
+// "·" and each phrase ("Z undoes") stays on one line; at 390px it takes no
+// more than its two lines (so the page is no taller), at 1280px one line, and
+// on a touch phone it's hidden.
+async function keysHint(browser, name) {
+  const lines = (page) => page.evaluate(() => {
+    const k = document.querySelector(".keys"), rows = new Map();
+    const walk = document.createTreeWalker(k, NodeFilter.SHOW_TEXT);
+    for (let n; (n = walk.nextNode());) for (let i = 0; i < n.length; i++) {
+      const r = document.createRange();
+      r.setStart(n, i); r.setEnd(n, i + 1);
+      const b = r.getBoundingClientRect();
+      if (!b.width) continue;
+      const top = Math.round(b.top + b.height / 2);
+      const row = [...rows.keys()].find((t) => Math.abs(t - top) < 4) ?? top;
+      rows.set(row, (rows.get(row) || "") + n.data[i]);
+    }
+    const text = k.textContent.replace(/\s+/g, " ").trim();
+    const shown = [...rows.entries()].sort((a, b) => a[0] - b[0]).map(([, t]) => t.replace(/\s+/g, " ").trim());
+    const phrases = text.split(" · ").map((p) => {
+      const at = shown.findIndex((l) => l.includes(p));
+      return { p, whole: at >= 0 };
+    });
+    return { shown, phrases, visible: !!k.offsetParent };
+  });
+  for (const width of [320, 390, 480, 1280]) {
+    const page = await browser.newPage({ viewport: { width, height: 844 } });
+    page.on("pageerror", (e) => fail(`${name}: page error: ${e.message}`));
+    await page.goto(base, { waitUntil: "networkidle" }).catch((e) => fail(`${name}: could not load ${base}: ${e.message}`));
+    await page.waitForSelector(".cell", { timeout: 8000 }).catch(() => fail(`${name}: board never rendered at ${width}px`));
+    const got = await lines(page);
+    const label = `${name} at ${width}px`;
+    if (!got.visible) fail(`${label}: the keys hint should show without touch`);
+    for (const l of got.shown) if (l.startsWith("·") || l.endsWith("·")) fail(`${label}: a keys hint line starts or ends with "·": "${l}"`);
+    for (const { p, whole } of got.phrases) if (!whole) fail(`${label}: "${p}" should stay on one line (lines: ${JSON.stringify(got.shown)})`);
+    if (width === 390 && got.shown.length > 2) fail(`${label}: the keys hint should take at most two lines, got ${JSON.stringify(got.shown)}`);
+    if (width === 1280 && got.shown.length !== 1)fail(`${label}: the keys hint should be one line, got ${JSON.stringify(got.shown)}`);
+    console.log(`${label}: keys hint ${JSON.stringify(got.shown)}`);
+    await page.locator(".keys").screenshot({ path: join(out, `${name}-keys-${width}.png`) });
+    await page.close();
+  }
+  const touch = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  await touch.goto(base, { waitUntil: "networkidle" }).catch((e) => fail(`${name}: could not load ${base}: ${e.message}`));
+  await touch.waitForSelector(".cell", { timeout: 8000 }).catch(() => {});
+  if ((await lines(touch)).visible) fail(`${name}: the keys hint should be hidden on a touch phone`);
+  await touch.close();
 }
 
 // Touch (phone): tapping controls works, keeps the page still, and leaves no
@@ -723,6 +773,7 @@ async function lessons(browser, name, viewport, colorScheme, touch) {
 const browser = await chromium.launch({ executablePath: browserPath });
 try {
   await keyboardStart(browser, "desktop-dark", { width: 1280, height: 900 });
+  await keysHint(browser, "keys-hint");
   await session(browser, "desktop-dark", { width: 1280, height: 900 }, "dark");
   await session(browser, "phone-light", { width: 390, height: 844 }, "light");
   await touchControls(browser, "phone-touch", { width: 390, height: 844 });
