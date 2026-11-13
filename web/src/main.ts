@@ -228,8 +228,8 @@ function renderMoves() {
 const MOVE_WORDS = ["move up", "move down", "move left", "move right", "wait a turn"];
 // The history the hint on screen was computed for, so a second press there isn't counted twice.
 let hintShownFor: string | null = null;
-// The first hint on a puzzle is a nudge about its idea, not a move. It never counts,
-// and a puzzle with hints already counted starts past it.
+// The first hint on a puzzle is a nudge about its idea, not a move. It never counts.
+// A puzzle with hints already counted opens past it; Start over gives it again (lab#29).
 let nudged = false;
 // Takes the "Undo N moves?" offer while it shows (its link, or U); null otherwise.
 let takeUndoOffer: (() => void) | null = null;
@@ -583,6 +583,9 @@ function undo() {
 function restart() {
   if (!game) return;
   game.reset();
+  // Back at the start, the next first press is the free nudge again. Hints
+  // already counted stay counted (lab#25).
+  nudged = false;
   solved = null;
   lastBoard = null;
   render();

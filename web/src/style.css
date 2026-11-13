@@ -370,9 +370,11 @@ button.hinted { border-color: var(--sun); box-shadow: 0 0 0 3px var(--sun-glow);
   .board { --size: min(var(--fit), (100cqh - 15px) / var(--rows)); }
   /* The status line never wraps (that would resize the board mid-game): its text
      shrinks to fit "Echo follows 4 moves behind" and "Moves 99 of par 16", and
-     keeps the line's height. */
+     keeps the line's height. The longest hint nudge fits the same width. The vw
+     line is for browsers without container units (the row is 100vw - 2rem wide
+     here); without it they keep 16px and a 39-letter nudge overflows at 320px. */
   .status-row { width: 100%; container-type: inline-size; }
-  .status { font-size: min(1rem, (100cqi - 0.5rem) / 23.5); line-height: 1.5rem; gap: 0.5rem; }
+  .status { font-size: min(1rem, (100vw - 2.5rem) / 23.5); font-size: min(1rem, (100cqi - 0.5rem) / 23.5); line-height: 1.5rem; gap: 0.5rem; }
 }
 @media (max-width: 380px) {
   .top nav { gap: 0; }
