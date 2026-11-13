@@ -2,11 +2,12 @@
 //!
 //! Usage:
 //!   afterstep-gen daily <out_dir> <from YYYY-MM-DD> <days>   generate missing daily levels
-//!   afterstep-gen check <level.json>...                        verify levels (solvable, needs echo) and print each nudge
+//!   afterstep-gen check <level.json>...                        verify levels (solvable, needs echo, needs a bump
+//!                                                              where `needsBump` says so) and print each nudge
 
 use afterstep_engine::gen::{generate, Params, Rng};
 use afterstep_engine::nudge::nudge;
-use afterstep_engine::solver::{solve, solve_without_echo};
+use afterstep_engine::solver::{solve, solve_in_sync, solve_without_echo};
 use afterstep_engine::Level;
 use serde_json::{json, Value};
 use std::path::Path;
@@ -103,34 +104,81 @@ fn check(files: &[String]) {
     let (mut bad, mut generic) = (0, 0);
     for f in files {
         let v: Value = serde_json::from_str(&std::fs::read_to_string(f).unwrap()).unwrap();
-        let rows: Vec<&str> = v["grid"].as_array().unwrap().iter().map(|r| r.as_str().unwrap()).collect();
-        let delay = v["delay"].as_u64().unwrap() as usize;
-        let level = Level::parse(&rows, delay).unwrap();
-        let needs_echo = v.get("needsEcho").and_then(Value::as_bool).unwrap_or(true);
-        let sol = solve(&level, 2_000_000);
-        let alone = solve_without_echo(&level, 2_000_000);
-        let par = v["par"].as_u64().map(|p| p as usize);
-        let ok = match &sol {
-            Some(s) => par.map_or(true, |p| p == s.moves.len()) && (!needs_echo || alone.is_none()),
-            None => false,
-        };
-        let n = nudge(&level, 2_000_000);
-        generic += n.is_generic() as usize;
-        println!(
-            "{} {f}: par {:?} solver {:?} alone-solvable {} nudge {:?}{}",
-            if ok { "ok " } else { "BAD" },
-            par,
-            sol.as_ref().map(|s| s.moves.as_str()),
-            alone.is_some(),
-            n.text(),
-            if n.is_generic() { " (generic)" } else { "" }
-        );
-        if !ok {
-            bad += 1;
-        }
+        let r = verdict(&v);
+        println!("{} {f}: {}", if r.ok { "ok " } else { "BAD" }, r.line);
+        bad += !r.ok as usize;
+        generic += r.generic as usize;
     }
     println!("{} levels, {bad} bad, {generic} with a generic nudge", files.len());
     if bad > 0 {
         exit(1);
+    }
+}
+
+struct Verdict {
+    ok: bool,
+    generic: bool,
+    line: String,
+}
+
+/// Check one level: solvable (at its par, if it has one), not solvable alone
+/// unless `needsEcho` is false, and, if `needsBump` is true, not solvable with
+/// the echo in step (every win needs it to bump a door on purpose).
+fn verdict(v: &Value) -> Verdict {
+    let rows: Vec<&str> = v["grid"].as_array().unwrap().iter().map(|r| r.as_str().unwrap()).collect();
+    let delay = v["delay"].as_u64().unwrap() as usize;
+    let level = Level::parse(&rows, delay).unwrap();
+    let needs_echo = v.get("needsEcho").and_then(Value::as_bool).unwrap_or(true);
+    let needs_bump = v.get("needsBump").and_then(Value::as_bool).unwrap_or(false);
+    let sol = solve(&level, 2_000_000);
+    let alone = solve_without_echo(&level, 2_000_000);
+    // Out of budget proves nothing, so it doesn't count as needing a bump.
+    let bump = needs_bump.then(|| matches!(solve_in_sync(&level, 2_000_000), Ok(None)));
+    let par = v["par"].as_u64().map(|p| p as usize);
+    let ok = match &sol {
+        Some(s) => par.map_or(true, |p| p == s.moves.len()) && (!needs_echo || alone.is_none()) && bump != Some(false),
+        None => false,
+    };
+    let n = nudge(&level, 2_000_000);
+    let line = format!(
+        "par {:?} solver {:?} alone-solvable {}{} nudge {:?}{}",
+        par,
+        sol.as_ref().map(|s| s.moves.as_str()),
+        alone.is_some(),
+        bump.map_or(String::new(), |b| format!(" needs bump {b}")),
+        n.text(),
+        if n.is_generic() { " (generic)" } else { "" }
+    );
+    Verdict { ok, generic: n.is_generic(), line }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn lesson(n: usize) -> Value {
+        let path = format!("{}/../levels/tutorial/{n}.json", env!("CARGO_MANIFEST_DIR"));
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn check_passes_every_lesson() {
+        for n in 1..=5 {
+            assert!(verdict(&lesson(n)).ok, "lesson {n}: {}", verdict(&lesson(n)).line);
+        }
+    }
+
+    #[test]
+    fn needs_bump_is_checked_with_the_echo_in_sync() {
+        // Lesson 5 says so and is right: it says so in the report, too.
+        let v = verdict(&lesson(5));
+        assert!(v.ok && v.line.contains("needs bump true"), "{}", v.line);
+        // Lesson 2 is won with the echo in step all the way.
+        let mut two = lesson(2);
+        two["needsBump"] = json!(true);
+        let v = verdict(&two);
+        assert!(!v.ok && v.line.contains("needs bump false"), "{}", v.line);
+        // Without the flag nothing is claimed, so nothing is searched.
+        assert!(!verdict(&lesson(2)).line.contains("needs bump"));
     }
 }

@@ -4,8 +4,11 @@
 // on desktop and tapping the controls on a touch phone. Hint check: the first
 // hint on each puzzle is a nudge about its idea (no move marked, not counted);
 // follows hints through lessons 1-3, gets stuck in lesson 4 and takes the
-// offered undo, and checks the hint count on today's puzzle (and its absence on
-// a past one). On the touch phone, today's nudge fits on one line.
+// offered undo, follows hints through lesson 5 (the echo bump), and checks the
+// hint count on today's puzzle (and its absence on a past one). On the touch
+// phone, today's nudge fits on one line. Lessons: all five are played in a row
+// by keyboard (desktop, dark) and by tapping the d-pad (phone, light), checking
+// "Lesson n of 5", where each win dialog leads, and that lesson 5 fits.
 //
 // Usage: node tests/playtest.mjs <baseUrl>
 // Env:   PLAYTEST_BROWSER  Chromium-based browser executable (default: Brave)
@@ -330,6 +333,15 @@ async function hintFlow(browser, name, viewport) {
     fail(`${name}: following hints after the undo did not solve lesson 4`);
     return page.close();
   }
+  await page.click("#next"); // "Next lesson"
+
+  // Lesson 5: the nudge names the bump, and hints solve it in its shortest 9 moves.
+  await expectNudge("lesson 5", "Let your echo hold A, then bump a door.");
+  if (!(await followHints("lesson 5"))) {
+    fail(`${name}: following hints did not solve lesson 5`);
+    return page.close();
+  }
+  if ((await page.textContent("#moves")).match(/Moves\s*(\d+)/)?.[1] !== "9") fail(`${name}: hints should solve lesson 5 in 9 moves, took ${await moves()}`);
   await page.click("#next"); // "Play today's puzzle"
 
   // Today's puzzle: a nudge, then one hint (pressed twice at the same spot) for
@@ -384,6 +396,78 @@ async function hintFlow(browser, name, viewport) {
   await page.close();
 }
 
+// All five lessons in a row, by keyboard or by tapping the d-pad. Each says
+// "Lesson n of 5"; lessons 1-4 lead to the next, lesson 5 to today's puzzle.
+// Lesson 5 can only be won by letting the echo bump door a while it stands on
+// plate B: check it does, that the board and d-pad fit like lesson 4's, and
+// that its tip reads as one balanced block.
+const LESSONS = ["RRRRR", "RRLDDD", "RRRRLLLDUDDD", "RRLDDDDD", "RRLDDDDDR"];
+async function lessons(browser, name, viewport, colorScheme, touch) {
+  const page = await browser.newPage({ viewport, colorScheme, hasTouch: touch, isMobile: touch });
+  page.on("console", (m) => m.type() === "error" && fail(`${name}: console error: ${m.text()}`));
+  page.on("pageerror", (e) => fail(`${name}: page error: ${e.message}`));
+  await page.goto(base, { waitUntil: "networkidle" }).catch((e) => fail(`${name}: could not load ${base}: ${e.message}`));
+  if (!(await page.waitForSelector(".cell", { timeout: 8000 }).catch(() => null))) {
+    fail(`${name}: board never rendered`);
+    return page.close();
+  }
+  const move = async (m) => {
+    if (!touch) return page.keyboard.press(KEY[m]);
+    await page.tap(m === "." ? "#wait" : `.dpad [data-move="${"UDLR".indexOf(m)}"]`);
+  };
+  const layout = () => page.evaluate(() => {
+    const r = (s) => document.querySelector(s).getBoundingClientRect();
+    return {
+      board: r("#board"), dpad: r(".dpad"), wide: document.documentElement.scrollWidth > window.innerWidth,
+      cell: r(".cell").width,
+    };
+  });
+  let four, lowest = 0;
+  for (const [i, sol] of LESSONS.entries()) {
+    const n = i + 1;
+    const sub = await page.textContent("#level-sub");
+    if (sub !== `Lesson ${n} of 5`) fail(`${name}: lesson ${n} should say "Lesson ${n} of 5", says "${sub}"`);
+    const at = await layout();
+    if (at.wide) fail(`${name}: lesson ${n} scrolls sideways`);
+    if (n === 4) four = at;
+    if (n < 5) lowest = Math.max(lowest, at.dpad.bottom);
+    if (n === 5) {
+      if ((await page.textContent("#level-title")) !== "Out of step") fail(`${name}: lesson 5 should be "Out of step"`);
+      if ((await page.textContent("#tip")) !== "A closed door stops your echo. Keep it on B.") fail(`${name}: lesson 5 tip should explain the bump`);
+      if (at.board.right > viewport.width || at.board.left < 0 || at.dpad.right > viewport.width) fail(`${name}: lesson 5 board or d-pad is off screen`);
+      if (at.board.height !== four.board.height || at.cell !== four.cell) fail(`${name}: lesson 5 board (${at.board.height}px, cells ${at.cell}px) should match lesson 4's (${four.board.height}px, ${four.cell}px)`);
+      if (at.dpad.bottom > lowest + 0.5) fail(`${name}: lesson 5's d-pad ends at ${at.dpad.bottom}px, lower than any other lesson's (${lowest}px)`);
+      console.log(`${name}: lesson 5 board ${at.board.width}x${at.board.height}, d-pad ends at ${Math.round(at.dpad.bottom)}px of ${viewport.height} (lessons 1-4: ${Math.round(lowest)}px)`);
+      await page.screenshot({ path: join(out, `${name}-lesson5.png`) });
+    }
+    for (const [j, m] of [...sol].entries()) {
+      await move(m);
+      // Lesson 5: on move 7 the echo bumps door a and stays on plate B.
+      if (n === 5 && j === 6) {
+        const st = await page.evaluate(() => ({
+          bumped: document.querySelector(".piece.echo").classList.contains("bump"),
+          onB: (() => { const e = document.querySelector(".piece.echo"); return e.style.getPropertyValue("--x") + "," + e.style.getPropertyValue("--y"); })(),
+        }));
+        if (!st.bumped || st.onB !== "1,1") fail(`${name}: lesson 5 move 7 should bump the echo into door a, leaving it on plate B (bumped ${st.bumped}, echo at ${st.onB})`);
+        await page.screenshot({ path: join(out, `${name}-lesson5-bump.png`) });
+      }
+    }
+    if (!(await dialogOpens(page))) {
+      fail(`${name}: lesson ${n} not solved by ${sol}`);
+      return page.close();
+    }
+    const next = await page.textContent("#next");
+    const want = n < 5 ? "Next lesson" : "Play today's puzzle";
+    if (next !== want) fail(`${name}: lesson ${n} win dialog should offer "${want}", offers "${next}"`);
+    if (n === 5) await page.screenshot({ path: join(out, `${name}-lesson5-won.png`) });
+    if (touch) await page.tap("#next");
+    else await page.keyboard.press("Enter"); // the dialog's focused button is Copy result (hidden) or Next
+  }
+  await page.waitForFunction(() => document.querySelector("#level-title").textContent.startsWith("Puzzle "), null, { timeout: 4000 })
+    .catch(() => fail(`${name}: "Play today's puzzle" after lesson 5 did not open today's puzzle`));
+  await page.close();
+}
+
 const browser = await chromium.launch({ executablePath: browserPath });
 try {
   await keyboardStart(browser, "desktop-dark", { width: 1280, height: 900 });
@@ -391,6 +475,8 @@ try {
   await session(browser, "phone-light", { width: 390, height: 844 }, "light");
   await touchControls(browser, "phone-touch", { width: 390, height: 844 });
   await hintFlow(browser, "desktop-hints", { width: 1280, height: 900 });
+  await lessons(browser, "desktop-lessons-dark", { width: 1280, height: 900 }, "dark", false);
+  await lessons(browser, "phone-lessons-light", { width: 390, height: 844 }, "light", true);
 } finally {
   await browser.close();
 }
