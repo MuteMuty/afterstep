@@ -2,6 +2,7 @@ import "./style.css";
 import init, { WasmGame } from "./wasm/afterstep_engine.js";
 import { createLikes, likeLabel, type LikeState } from "./likes";
 import { parseRoute, routeHash, routeTitle, shareUrl, type Route } from "./route";
+import { boardNews, boardState, type BoardState } from "./announce";
 
 type Level = {
   id: number | string;
@@ -35,6 +36,7 @@ const playEl = document.querySelector<HTMLElement>(".play")!;
 const solvedEl = $("solved");
 const solvedText = $("solved-text");
 const solvedActions = $("solved-actions");
+const boardNewsEl = $("board-news");
 
 // ---------- persistence (per-browser only) ----------
 const SAVE_KEY = "afterstep:v1";
@@ -114,6 +116,11 @@ function buildBoard() {
     } else if (c >= "a" && c <= "h") {
       cell.classList.add("door");
       cell.style.setProperty("--c", `var(--l${letterOf(c) % 4})`);
+      const l = document.createElement("span");
+      l.className = "door-l";
+      l.textContent = c.toUpperCase();
+      l.setAttribute("aria-hidden", "true");
+      cell.append(l);
     }
     board.append(cell);
     return cell;
@@ -160,6 +167,9 @@ function predictEcho(g: WasmGame): { pos: number; inMoves: number }[] {
   return out;
 }
 
+// The board as last announced; null after a load or Start over, which say nothing.
+let lastBoard: BoardState | null = null;
+
 function render() {
   if (!game) return;
   clearHint();
@@ -167,6 +177,12 @@ function render() {
   const open = g.open_doors();
   const player = g.player();
   const echo = g.echo();
+  // Plates pressed, doors opening or closing and the echo appearing are read out
+  // through the status line's live region (lab#9). Plain steps clear it, so the
+  // same news later is read again.
+  const now = boardState(tiles, player, echo, open);
+  boardNewsEl.textContent = boardNews(lastBoard, now);
+  lastBoard = now;
   tiles.forEach((c, i) => {
     if (c >= "a" && c <= "h") els.cells[i].classList.toggle("open", (open & (1 << letterOf(c))) !== 0 || i === player || i === echo);
     if (c >= "A" && c <= "H") els.cells[i].classList.toggle("pressed", (open & (1 << letterOf(c))) !== 0);
@@ -375,6 +391,7 @@ function loadLevel(l: Level) {
   // A daily solved before in this browser opens solved, from its saved best.
   const best = mode === "daily" ? save.results[l.date!] : 0;
   solved = best ? { moves: best, hints: 0 } : null;
+  lastBoard = null;
   buildBoard();
   if (mode === "learn") {
     title.textContent = l.name ?? "Lesson";
@@ -552,6 +569,7 @@ function restart() {
   if (!game) return;
   game.reset();
   solved = null;
+  lastBoard = null;
   render();
 }
 

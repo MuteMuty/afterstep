@@ -39,10 +39,12 @@
     --sun-glow: rgba(228, 138, 0, 0.35);
     --ghost: #2f6fcc;
     --exit: #0f2a55;
-    --l0: #d4503a;
-    --l1: #3f8f1f;
+    /* Deep enough for letters to reach 4.5:1 on a tile, and a tile's colour on them
+       (tests/contrast.test.mjs). */
+    --l0: #c0402b;
+    --l1: #357a19;
     --l2: #8a4fd0;
-    --l3: #b08400;
+    --l3: #8a6800;
     --focus: #0f2a55;
     color-scheme: light;
   }
@@ -167,7 +169,7 @@ main { flex: 1; width: 100%; max-width: 560px; margin: 0 auto; padding: 0 1rem 2
   font: 600 calc(var(--size) * 0.26) / 1 var(--font-body);
   transition: background 0.15s;
 }
-.cell.plate.pressed::after { background: var(--c); color: var(--paper); }
+.cell.plate.pressed::after { background: var(--c); color: var(--cell); }
 .cell.door::after {
   content: "";
   position: absolute;
@@ -179,6 +181,20 @@ main { flex: 1; width: 100%; max-width: 560px; margin: 0 auto; padding: 0 1rem 2
   transform-origin: top;
 }
 .cell.door.open::after { transform: scaleY(0.12); opacity: 0.6; }
+/* Each door names its plate's letter, so doors aren't told apart by colour alone.
+   The letter sits on a chip of tile colour over the stripes, and stays when the
+   door opens. */
+.door-l {
+  position: absolute;
+  inset: 29%;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  border-radius: 5px;
+  background: var(--cell);
+  color: var(--c);
+  font: 600 calc(var(--size) * 0.26) / 1 var(--font-body);
+}
 
 .foot-print, .piece, .spawn, .hint-mark {
   position: absolute;
@@ -263,7 +279,7 @@ main { flex: 1; width: 100%; max-width: 560px; margin: 0 auto; padding: 0 1rem 2
 .status strong { color: var(--ink); font-weight: 600; }
 /* The hint note takes the status line's place, so nothing below it moves. */
 .status { position: relative; }
-.status.hinting > span:not(.hint-note) { visibility: hidden; }
+.status.hinting > span:not(.hint-note, .sr-only) { visibility: hidden; }
 .hint-note {
   position: absolute;
   inset: 0;
