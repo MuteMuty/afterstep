@@ -26,6 +26,13 @@
 // 429 notes, keyboard, labels and no cookies; the page is no taller with the
 // heart at 390x844; with the API resting (503), unreachable or slow the game
 // plays at once and the heart never shows.
+// Routes (lab#8): today (bare URL), Past puzzles (#/past), a past puzzle
+// (#/puzzle/<date>) and lessons (#/learn/<n>) each push one history entry
+// (moves push none) and set the title; Back and Forward walk them without
+// leaving the site, also with the win dialog open; reloading keeps the screen;
+// a past puzzle's copied result links to it, today's to the home page; links
+// to a future, missing or malformed date or an unknown route open today's
+// puzzle with the URL replaced and no console error.
 //
 // Usage: node tests/playtest.mjs <baseUrl>
 // Env:   PLAYTEST_BROWSER  Chromium-based browser executable (default: Brave)
@@ -188,6 +195,7 @@ async function winKeys(page, name, playing) {
   const copied = await page.evaluate(() => window.__copied ?? "");
   if (!copied.includes(`: ${level.par} moves (par ${level.par}) ★`))
     fail(`${name}: copied result should show the ${level.par}-move win, got "${copied.split("\n")[0]}"`);
+  if (!copied.endsWith("\nhttps://afterstep.brightloopapps.com")) fail(`${name}: today's copied result should link to the home page, got "${copied.split("\n")[1]}"`);
   await page.keyboard.press("Escape");
   if (await page.isVisible("dialog[open]")) fail(`${name}: Escape should close the win dialog`);
 
@@ -598,8 +606,9 @@ async function hintFlow(browser, name, viewport) {
   await page.click("#next"); // "Play today's puzzle"
 
   // Today's puzzle: a nudge, then one hint (pressed twice at the same spot) for
-  // the last move. Only the move counts: "with 1 hint".
-  await page.waitForSelector(".cell");
+  // the last move. Only the move counts: "with 1 hint". Wait for it to load:
+  // lesson 5's cells stay on screen until it does, and keys there do nothing.
+  await page.waitForFunction((t) => document.querySelector("#level-title").textContent === t, `Puzzle ${level.id}`);
   await play(page, level.solution.slice(0, -1));
   await expectNudge("today's puzzle");
   await page.click("#hint");
@@ -998,8 +1007,156 @@ async function likesFlow(browser) {
   }
 }
 
+// Routes (lab#8): each screen has its own URL. Walks today -> Past puzzles -> a
+// past puzzle -> lessons 1 and 2 by clicking, then Back, Forward and reload.
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const HOME_TITLE = "Afterstep: a daily puzzle where your past self holds the doors";
+async function routes(browser, name, viewport) {
+  const page = await newPage(browser, { viewport });
+  page.on("console", (m) => m.type() === "error" && fail(`${name}: console error: ${m.text()}`));
+  page.on("pageerror", (e) => fail(`${name}: page error: ${e.message}`));
+  const origin = new URL(base).origin;
+  const dates = readdirSync(join(repo, "levels/daily")).map((f) => f.replace(".json", "")).filter((d) => d < today).sort();
+  const pastDate = dates[dates.length - 1];
+  if (!pastDate) return fail(`${name}: no puzzle before today to test with`);
+  const past = JSON.parse(readFileSync(join(repo, "levels/daily", `${pastDate}.json`), "utf8"));
+  const [, pm, pd] = pastDate.split("-").map(Number);
+  const pastTitle = `Afterstep · ${pd} ${MONTHS[pm - 1]}`;
+
+  // Where the page is: its URL (without the origin), title, history length and screen.
+  const where = () => page.evaluate(() => ({
+    url: location.href.slice(location.origin.length),
+    title: document.title,
+    length: history.length,
+    screen: document.querySelector(".play").hidden ? (document.querySelector("#archive").hidden ? "none" : "past") : document.querySelector("#level-title").textContent,
+    sub: document.querySelector("#level-sub").textContent,
+    dialog: !!document.querySelector("dialog[open]"),
+  }));
+  const settle = (screen) => page.waitForFunction((screen) => {
+    const play = !document.querySelector(".play").hidden;
+    return screen === "past" ? !play && !document.querySelector("#archive").hidden : play && document.querySelector("#level-title").textContent === screen;
+  }, screen, { timeout: 3000 }).catch(() => {});
+  async function expectAt(label, want) {
+    if (!page.url().startsWith(origin)) return fail(`${name}: ${label}: left the site for ${page.url()}`);
+    await settle(want.screen);
+    const got = await where();
+    for (const k of Object.keys(want)) if (got[k] !== want[k]) fail(`${name}: ${label}: ${k} should be ${JSON.stringify(want[k])}, is ${JSON.stringify(got[k])}`);
+    return got;
+  }
+
+  // A newcomer's bare URL is the first lesson, with the URL replaced, not added to.
+  await page.goto(base, { waitUntil: "networkidle" });
+  await page.waitForSelector(".cell", { timeout: 8000 });
+  const start = await where();
+  const first = await expectAt("newcomer's first visit", { url: "/#/learn/1", title: "Afterstep · Lesson 1", screen: "Plates open doors" });
+  const n0 = first.length;
+
+  const lessonTitle = await page.textContent("#level-title");
+  const todayTitle = `Puzzle ${level.id}`, pastScreen = `Puzzle ${past.id}`;
+  await page.click('[data-nav="today"]');
+  await expectAt("Today", { url: "/", title: HOME_TITLE, screen: todayTitle, length: n0 + 1 });
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("Space");
+  await expectAt("two moves on today's puzzle", { url: "/", length: n0 + 1 });
+
+  await page.click('[data-nav="archive"]');
+  await expectAt("Past puzzles", { url: "/#/past", title: "Afterstep · Past puzzles", screen: "past", length: n0 + 2 });
+  await page.evaluate((id) => [...document.querySelectorAll("#archive-list button")].find((b) => b.textContent.startsWith(`Puzzle ${id} `)).click(), past.id);
+  await expectAt("a past puzzle", { url: `/#/puzzle/${pastDate}`, title: pastTitle, screen: pastScreen, length: n0 + 3 });
+  await page.keyboard.press("ArrowDown");
+  await expectAt("a move on a past puzzle", { url: `/#/puzzle/${pastDate}`, length: n0 + 3 });
+
+  await page.click('[data-nav="learn"]');
+  await expectAt("How to play", { url: "/#/learn/1", title: "Afterstep · Lesson 1", screen: lessonTitle, length: n0 + 4 });
+  await play(page, "RRRRR");
+  if (!(await dialogOpens(page))) fail(`${name}: lesson 1 not solved by RRRRR`);
+  await page.click("#next");
+  const lesson2 = await expectAt("lesson 2 by Next", { url: "/#/learn/2", title: "Afterstep · Lesson 2", sub: "Lesson 2 of 5", length: n0 + 5 });
+  await page.screenshot({ path: join(out, `${name}-lesson2.png`) });
+
+  // Reload keeps lesson 2 (not lesson 1) and adds nothing.
+  await page.reload({ waitUntil: "networkidle" });
+  await expectAt("lesson 2 reloaded", { url: "/#/learn/2", title: "Afterstep · Lesson 2", screen: lesson2.screen, sub: "Lesson 2 of 5", length: n0 + 5 });
+
+  // Back walks every screen, without leaving the site.
+  await page.goBack();
+  await expectAt("Back to lesson 1", { url: "/#/learn/1", title: "Afterstep · Lesson 1", screen: lessonTitle });
+  await page.goBack();
+  await expectAt("Back to the past puzzle", { url: `/#/puzzle/${pastDate}`, title: pastTitle, screen: pastScreen });
+  await page.goBack();
+  await expectAt("Back to Past puzzles", { url: "/#/past", title: "Afterstep · Past puzzles", screen: "past" });
+  await page.goBack();
+  await expectAt("Back to today", { url: "/", title: HOME_TITLE, screen: todayTitle });
+  await page.goBack();
+  await expectAt("Back to the first lesson", { url: "/#/learn/1", screen: lessonTitle });
+
+  // Forward walks them again.
+  await page.goForward();
+  await expectAt("Forward to today", { url: "/", title: HOME_TITLE, screen: todayTitle });
+  await page.goForward();
+  await expectAt("Forward to Past puzzles", { url: "/#/past", screen: "past" });
+  await page.goForward();
+  await expectAt("Forward to the past puzzle", { url: `/#/puzzle/${pastDate}`, title: pastTitle, screen: pastScreen });
+  const navCurrent = await page.evaluate(() => document.querySelector("[data-nav][aria-current]")?.dataset.nav);
+  if (navCurrent !== "archive") fail(`${name}: a past puzzle should mark Past puzzles in the nav, marks ${navCurrent}`);
+
+  // Reload keeps the past puzzle; its result links to it.
+  await page.reload({ waitUntil: "networkidle" });
+  await expectAt("past puzzle reloaded", { url: `/#/puzzle/${pastDate}`, title: pastTitle, screen: pastScreen, length: n0 + 5 });
+  await play(page, past.solution);
+  if (!(await dialogOpens(page))) fail(`${name}: the past puzzle (${pastDate}) not solved by its solution`);
+  else {
+    await stubClipboard(page);
+    await page.click("#share");
+    const copied = await page.evaluate(() => window.__copied);
+    const link = `https://afterstep.brightloopapps.com/#/puzzle/${pastDate}`;
+    if (copied.split("\n")[1] !== link) fail(`${name}: a past puzzle's result should link to ${link}, got "${copied.split("\n")[1]}"`);
+    // Back with the win dialog open closes it and goes back.
+    await page.goBack();
+    await expectAt("Back with the win dialog open", { url: "/#/past", screen: "past", dialog: false });
+    await page.goForward();
+    await expectAt("Forward to the solved past puzzle", { url: `/#/puzzle/${pastDate}`, screen: pastScreen, dialog: false });
+    await expectSolved(page, name, "past puzzle opened by Forward", `Solved in ${past.par} moves, par ${past.par}`, "Past puzzles");
+    if ((await page.evaluate(() => document.activeElement.id)) !== "board") fail(`${name}: a puzzle opened by Forward should focus the board`);
+  }
+  console.log(`${name}: newcomer at ${start.url}, then today, Past puzzles, ${pastDate}, lessons 1-2: Back, Forward and reload walk them`);
+  await page.close();
+
+  // Bad links open today's puzzle with the URL replaced (newcomers included), with no console error.
+  const t = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+  const tomorrow = `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())}`;
+  const bad = [`#/puzzle/${tomorrow}`, "#/puzzle/2099-01-01", "#/puzzle/2001-01-01", "#/puzzle/2026-02-30", "#/puzzle/nov-10", "#/nope", "#/learn/9"];
+  const fresh = await newPage(browser, { viewport });
+  await fresh.goto(new URL("/#/past", base).href, { waitUntil: "networkidle" });
+  const freshLength = await fresh.evaluate(() => history.length);
+  await fresh.close();
+  for (const hash of bad) {
+    const label = `${name}: link ${hash}`;
+    const p = await newPage(browser, { viewport });
+    p.on("console", (m) => m.type() === "error" && fail(`${label}: console error: ${m.text()}`));
+    p.on("pageerror", (e) => fail(`${label}: page error: ${e.message}`));
+    await p.goto(new URL("/" + hash, base).href, { waitUntil: "networkidle" });
+    await p.waitForFunction((s) => !document.querySelector(".play").hidden && document.querySelector("#level-title").textContent === s, todayTitle, { timeout: 3000 }).catch(() => {});
+    const got = await p.evaluate(() => ({ url: location.href.slice(location.origin.length), title: document.title, screen: document.querySelector("#level-title").textContent, length: history.length }));
+    const want = { url: "/", title: HOME_TITLE, screen: todayTitle, length: freshLength };
+    if (JSON.stringify(got) !== JSON.stringify(want)) fail(`${label}: should open today's puzzle at the bare URL with nothing added to history, got ${JSON.stringify(got)}, wanted ${JSON.stringify(want)}`);
+    // The same link followed in place (a hash change) also lands on today, replacing itself.
+    if (hash === bad[0]) {
+      await p.click('[data-nav="archive"]');
+      const before = await p.evaluate(() => history.length);
+      await p.evaluate((h) => { location.hash = h; }, hash);
+      await p.waitForFunction((s) => !document.querySelector(".play").hidden && document.querySelector("#level-title").textContent === s, todayTitle, { timeout: 3000 }).catch(() => {});
+      const after = await p.evaluate(() => ({ url: location.href.slice(location.origin.length), length: history.length }));
+      if (after.url !== "/" || after.length !== before + 1) fail(`${label}: typed in place, should land on today at "/" (one entry for the typed link), got ${JSON.stringify(after)} from ${before}`);
+    }
+    await p.close();
+  }
+  console.log(`${name}: ${bad.length} bad links open today's puzzle at "/" with the URL replaced`);
+}
+
 const browser = await chromium.launch({ executablePath: browserPath });
 try {
+  await routes(browser, "routes", { width: 1280, height: 900 });
   await likesFlow(browser);
   await keyboardStart(browser, "desktop-dark", { width: 1280, height: 900 });
   await keysHint(browser, "keys-hint");
