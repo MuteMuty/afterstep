@@ -3,6 +3,10 @@ import init, { WasmGame } from "./wasm/afterstep_engine.js";
 import { createLikes, likeLabel, type LikeState } from "./likes";
 import { parseRoute, routeHash, routeTitle, shareUrl, type Route } from "./route";
 import { boardNews, boardState, type BoardState } from "./announce";
+import {
+  archiveParts, bestResult, countHint, hintText, hintsSeen, readSave, recordResult, resultLine, shareLine, total, winTitle,
+  type Result,
+} from "./score";
 
 type Level = {
   id: number | string;
@@ -16,7 +20,6 @@ type Level = {
 };
 type DailyEntry = { id: number; date: string; tier: string; par: number };
 type Index = { daily: DailyEntry[]; tutorial: Level[] };
-type Save = { learned: boolean; results: Record<string, number> };
 
 const UP = 0, DOWN = 1, LEFT = 2, RIGHT = 3, WAIT = 4;
 const DELTA: Record<number, [number, number]> = { 0: [0, -1], 1: [0, 1], 2: [-1, 0], 3: [1, 0], 4: [0, 0] };
@@ -39,13 +42,12 @@ const solvedActions = $("solved-actions");
 const boardNewsEl = $("board-news");
 
 // ---------- persistence (per-browser only) ----------
+// What's kept and how old saves read: see score.ts.
 const SAVE_KEY = "afterstep:v1";
-function loadSave(): Save {
-  try {
-    const s = JSON.parse(localStorage.getItem(SAVE_KEY) || "");
-    if (s && typeof s === "object") return { learned: !!s.learned, results: s.results || {} };
-  } catch {}
-  return { learned: false, results: {} };
+function loadSave() {
+  let raw: string | null = null;
+  try { raw = localStorage.getItem(SAVE_KEY); } catch {}
+  return readSave(raw);
 }
 const save = loadSave();
 function persist() {
@@ -75,8 +77,9 @@ function streak(): number {
 let index: Index;
 let level: Level;
 let mode: "daily" | "learn" = "daily";
-// Today's daily counts hints in its result; lessons and past puzzles don't.
 let isToday = false;
+// Hints shown on this daily so far, each one a move in its result (lab#25).
+// Saved per puzzle, so leaving, a reload and Start over keep them. Lessons don't count hints.
 let hintsUsed = 0;
 let tutorialStep = 0;
 let game: WasmGame | null = null;
@@ -211,15 +214,22 @@ function render() {
   echoStatus.innerHTML = echoIn > 0
     ? `Echo appears in <strong>${echoIn}</strong>`
     : `Echo follows <strong>${level.delay}</strong> moves behind`;
-  movesEl.innerHTML = `Moves <strong>${g.moves()}</strong>${level.par ? ` of par ${level.par}` : ""}`;
+  renderMoves();
   renderSolved();
+}
+
+/** The move counter, with each hint on a daily counted as a move. */
+function renderMoves() {
+  if (!game) return;
+  movesEl.innerHTML = `Moves <strong>${game.moves() + hintsUsed}</strong>${level.par ? ` of par ${level.par}` : ""}`;
 }
 
 // ---------- hints ----------
 const MOVE_WORDS = ["move up", "move down", "move left", "move right", "wait a turn"];
 // The history the hint on screen was computed for, so a second press there isn't counted twice.
 let hintShownFor: string | null = null;
-// The first hint on a puzzle is a nudge about its idea, not a move. It never counts.
+// The first hint on a puzzle is a nudge about its idea, not a move. It never counts,
+// and a puzzle with hints already counted starts past it.
 let nudged = false;
 // Takes the "Undo N moves?" offer while it shows (its link, or U); null otherwise.
 let takeUndoOffer: (() => void) | null = null;
@@ -242,7 +252,8 @@ function note(...parts: (string | Node)[]) {
 
 /** Show the next move of a shortest win from here, or offer to undo back to
  *  the last position that can still be won. The first hint on a puzzle from a
- *  winnable position is a nudge about the idea instead. Hints never count as moves. */
+ *  winnable position is a nudge about the idea instead. On a daily each move hint
+ *  counts as a move (the nudge and the undo offer don't). */
 function showHint() {
   if (!game || win.open) return;
   if (solved || game.won()) return nudgeSolved();
@@ -256,7 +267,11 @@ function showHint() {
     note(g.nudge());
   } else if (h >= 0 && h <= WAIT) {
     hintShownFor = here;
-    hintsUsed++;
+    if (mode === "daily") {
+      hintsUsed = countHint(save, level.date!);
+      persist();
+      renderMoves();
+    }
     const [dx, dy] = DELTA[h];
     const p = g.player();
     place(els.hint, p + dy * w + dx);
@@ -314,12 +329,7 @@ function act(a: number) {
 // dialog shows it), or the saved best when a solved daily is opened again. The
 // dialog, the solved line and the copied result all read it. Null while playing;
 // Undo and Start over clear it.
-let solved: { moves: number; hints: number } | null = null;
-
-/** " with 2 hints" on today's daily when any were used, otherwise "". */
-function hintText(n: number): string {
-  return n > 0 ? ` with ${n} ${n === 1 ? "hint" : "hints"}` : "";
-}
+let solved: Result | null = null;
 
 /** Where Next goes: the next lesson, today's puzzle after the last one, or Past puzzles. */
 function nextLabel(): string {
@@ -343,7 +353,7 @@ function renderSolved() {
   solvedShown = shown;
   playEl.classList.toggle("is-solved", shown);
   solvedActions.hidden = !shown;
-  const text = shown && solved ? `Solved in ${solved.moves} moves${hintText(solved.hints)}${level.par ? `, par ${level.par}` : ""}` : "";
+  const text = shown && solved ? resultLine(solved, level.par) : "";
   if (solvedText.textContent !== text) solvedText.textContent = text;
   $("solved-share").hidden = mode === "learn";
   $("solved-next").textContent = nextLabel();
@@ -357,7 +367,7 @@ function nudgeSolved() {
 function onWin() {
   if (!game) return;
   const moves = game.moves();
-  solved = { moves, hints: mode === "daily" && isToday ? hintsUsed : 0 };
+  solved = { moves, hints: hintsUsed };
   const par = level.par ?? moves;
   if (mode === "learn") {
     $("win-title").textContent = "Nice";
@@ -366,14 +376,13 @@ function onWin() {
       : "You know everything you need. Today's puzzle is waiting.";
     $("share").hidden = true;
   } else {
-    const key = level.date!;
-    const best = save.results[key];
-    if (!best || moves < best) save.results[key] = moves;
+    // A hinted solve counts for the streak; it replaces the saved best only if it beats it.
+    recordResult(save, level.date!, solved);
     persist();
-    $("win-title").textContent = moves <= par ? "Perfect" : "Solved";
+    $("win-title").textContent = winTitle(solved, par);
     const s = streak();
     $("win-body").textContent =
-      `Puzzle ${level.id} in ${moves} moves${hintText(solved.hints)}. Par is ${par}.` + (s > 1 ? ` You're on a ${s}-day streak.` : "");
+      `Puzzle ${level.id} in ${total(solved)} moves${hintText(solved.hints)}. Par is ${par}.` + (s > 1 ? ` You're on a ${s}-day streak.` : "");
     $("share").hidden = false;
   }
   $("next").textContent = nextLabel();
@@ -387,11 +396,10 @@ function loadLevel(l: Level) {
   level = l;
   game?.free();
   game = new WasmGame(l.grid.join("\n"), l.delay);
-  hintsUsed = 0;
-  nudged = false;
+  hintsUsed = mode === "daily" ? hintsSeen(save, l.date!) : 0;
+  nudged = hintsUsed > 0;
   // A daily solved before in this browser opens solved, from its saved best.
-  const best = mode === "daily" ? save.results[l.date!] : 0;
-  solved = best ? { moves: best, hints: 0 } : null;
+  solved = mode === "daily" ? bestResult(save, l.date!) : null;
   lastBoard = null;
   buildBoard();
   if (mode === "learn") {
@@ -447,9 +455,9 @@ function openArchive() {
       .map((d) => {
         const li = document.createElement("li");
         const b = document.createElement("button");
-        const best = save.results[d.date];
+        const best = bestResult(save, d.date);
         b.innerHTML = `<span>Puzzle ${d.id} <span class="meta">${prettyDate(d.date)}</span></span>` +
-          `<span class="meta">${TIER[d.tier]}${best ? `, <span class="done">solved in ${best}</span>` : ""}</span>`;
+          `<span class="meta">${TIER[d.tier]}${best ? `, <span class="done">${archiveParts(best).map((t) => `<span>${t}</span>`).join(" ")}</span>` : ""}</span>`;
         b.onclick = () => go({ kind: "puzzle", date: d.date });
         li.append(b);
         return li;
@@ -622,9 +630,8 @@ function next() {
 }
 async function copyResult(button: HTMLElement) {
   if (!solved) return;
-  const { moves, hints } = solved;
   // Today's result links to the home page; an older puzzle's to that puzzle.
-  const text = `Afterstep #${level.id}: ${moves} moves${hintText(hints)} (par ${level.par})${moves <= (level.par ?? 0) ? " ★" : ""}\n${shareUrl(level.date!, localDate())}`;
+  const text = `${shareLine(level.id, solved, level.par ?? 0)}\n${shareUrl(level.date!, localDate())}`;
   try {
     await navigator.clipboard.writeText(text);
     button.textContent = "Copied";

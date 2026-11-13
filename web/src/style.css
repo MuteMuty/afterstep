@@ -437,6 +437,7 @@ button.hinted { border-color: var(--sun); box-shadow: 0 0 0 3px var(--sun-glow);
 }
 .archive .meta { color: var(--ink-dim); font-variant-numeric: tabular-nums; }
 .archive .done { color: var(--sun); }
+.archive .done > span { white-space: nowrap; }
 
 /* ---------- win dialog ---------- */
 dialog {
