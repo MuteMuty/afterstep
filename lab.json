@@ -4,7 +4,7 @@
   "worker": "afterstep",
   "commands": {
     "install": "npm ci",
-    "test": "PATH=$HOME/.cargo/bin:$PATH cargo test --release --manifest-path engine/Cargo.toml --features gen",
+    "test": "PATH=$HOME/.cargo/bin:$PATH cargo test --release --manifest-path engine/Cargo.toml --features gen && node --test tests/*.test.mjs",
     "build": "npm run build",
     "serve": "npx vite preview web --port {port} --strictPort",
     "playtest": "node tests/playtest.mjs",

@@ -20,6 +20,12 @@
 // and 390x844 touch, and a fast double-tap on Next can't move in the next lesson.
 // Keys hint: from 320 to 480px without touch no line starts or ends with "·"
 // and no phrase breaks; one line at 1280px; hidden on a touch phone.
+// Likes (lab#17): every page uses a mocked lab like API and may ask nothing but
+// Afterstep and that API. Liking shows at once, survives a reload and unlikes
+// with the stored receipt (also days later); the win dialog's heart, 409 and
+// 429 notes, keyboard, labels and no cookies; the page is no taller with the
+// heart at 390x844; with the API resting (503), unreachable or slow the game
+// plays at once and the heart never shows.
 //
 // Usage: node tests/playtest.mjs <baseUrl>
 // Env:   PLAYTEST_BROWSER  Chromium-based browser executable (default: Brave)
@@ -113,7 +119,7 @@ async function play(page, moves) {
 }
 
 async function session(browser, name, viewport, colorScheme) {
-  const page = await browser.newPage({ viewport, colorScheme });
+  const page = await newPage(browser, { viewport, colorScheme });
   page.on("console", (m) => m.type() === "error" && fail(`${name}: console error: ${m.text()}`));
   page.on("pageerror", (e) => fail(`${name}: page error: ${e.message}`));
   const res = await page.goto(base, { waitUntil: "networkidle" }).catch((e) => fail(`${name}: could not load ${base}: ${e.message}`));
@@ -236,7 +242,7 @@ async function reopen(page, name) {
 // Keyboard-first start (desktop): the board has focus on load with a visible
 // ring, and Tab from the top of the page goes nav buttons -> board -> Undo.
 async function keyboardStart(browser, name, viewport) {
-  const page = await browser.newPage({ viewport });
+  const page = await newPage(browser, { viewport });
   page.on("pageerror", (e) => fail(`${name}: page error: ${e.message}`));
   await page.goto(base, { waitUntil: "networkidle" }).catch((e) => fail(`${name}: could not load ${base}: ${e.message}`));
   if (!(await page.waitForSelector(".cell", { timeout: 8000 }).catch(() => null))) {
@@ -326,7 +332,7 @@ async function keysHint(browser, name) {
     return { shown, phrases, visible: !!k.offsetParent };
   });
   for (const width of [320, 390, 480, 1280]) {
-    const page = await browser.newPage({ viewport: { width, height: 844 } });
+    const page = await newPage(browser, { viewport: { width, height: 844 } });
     page.on("pageerror", (e) => fail(`${name}: page error: ${e.message}`));
     await page.goto(base, { waitUntil: "networkidle" }).catch((e) => fail(`${name}: could not load ${base}: ${e.message}`));
     await page.waitForSelector(".cell", { timeout: 8000 }).catch(() => fail(`${name}: board never rendered at ${width}px`));
@@ -341,7 +347,7 @@ async function keysHint(browser, name) {
     await page.locator(".keys").screenshot({ path: join(out, `${name}-keys-${width}.png`) });
     await page.close();
   }
-  const touch = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  const touch = await newPage(browser, { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
   await touch.goto(base, { waitUntil: "networkidle" }).catch((e) => fail(`${name}: could not load ${base}: ${e.message}`));
   await touch.waitForSelector(".cell", { timeout: 8000 }).catch(() => {});
   if ((await lines(touch)).visible) fail(`${name}: the keys hint should be hidden on a touch phone`);
@@ -351,7 +357,7 @@ async function keysHint(browser, name) {
 // Touch (phone): tapping controls works, keeps the page still, and leaves no
 // focus ring on the board.
 async function touchControls(browser, name, viewport) {
-  const page = await browser.newPage({ viewport, hasTouch: true, isMobile: true });
+  const page = await newPage(browser, { viewport, hasTouch: true, isMobile: true });
   page.on("pageerror", (e) => fail(`${name}: page error: ${e.message}`));
   await page.goto(base, { waitUntil: "networkidle" }).catch((e) => fail(`${name}: could not load ${base}: ${e.message}`));
   if (!(await page.waitForSelector(".cell", { timeout: 8000 }).catch(() => null))) {
@@ -474,7 +480,7 @@ async function touchControls(browser, name, viewport) {
 // moves), get stuck in lesson 4 and take the offered undo, then use one hint on
 // today's puzzle (counted in the result) and one on a past puzzle (not counted).
 async function hintFlow(browser, name, viewport) {
-  const page = await browser.newPage({ viewport });
+  const page = await newPage(browser, { viewport });
   page.on("console", (m) => m.type() === "error" && fail(`${name}: console error: ${m.text()}`));
   page.on("pageerror", (e) => fail(`${name}: page error: ${e.message}`));
   await page.goto(base, { waitUntil: "networkidle" }).catch((e) => fail(`${name}: could not load ${base}: ${e.message}`));
@@ -676,7 +682,7 @@ async function hintFlow(browser, name, viewport) {
 // that its tip reads as one balanced block.
 const LESSONS = ["RRRRR", "RRLDDD", "RRRRLLLDUDDD", "RRLDDDDD", "RRLDDDDDR"];
 async function lessons(browser, name, viewport, colorScheme, touch) {
-  const page = await browser.newPage({ viewport, colorScheme, hasTouch: touch, isMobile: touch });
+  const page = await newPage(browser, { viewport, colorScheme, hasTouch: touch, isMobile: touch });
   page.on("console", (m) => m.type() === "error" && fail(`${name}: console error: ${m.text()}`));
   page.on("pageerror", (e) => fail(`${name}: page error: ${e.message}`));
   await page.goto(base, { waitUntil: "networkidle" }).catch((e) => fail(`${name}: could not load ${base}: ${e.message}`));
@@ -770,8 +776,231 @@ async function lessons(browser, name, viewport, colorScheme, touch) {
   await page.close();
 }
 
+// ── Likes (lab#17) ──────────────────────────────────────────────────────────
+// Every page talks to a mocked lab like API (never the live one), and may only
+// ask Afterstep's own origin and lab.brightloopapps.com/api/likes (plus the
+// Google Fonts stylesheet the page already loaded before likes).
+const LAB = "https://lab.brightloopapps.com";
+const FONTS = /^https:\/\/fonts\.(googleapis|gstatic)\.com\//;
+
+/** A stateful stand-in for the hub's /api/likes. `mode`: "ok", "resting" (what the
+ *  live hub answers until its migration: 204 to a quiet GET, 503 otherwise),
+ *  "down" (unreachable) or "slow" (answers after 8 s). `next` forces the status
+ *  of the next POST or DELETE (409, 429). `delay` holds each POST and DELETE. */
+async function mockLikes(page, opts = {}) {
+  const api = { mode: "ok", total: 12, delay: 0, next: null, receipts: [], calls: [], ...opts };
+  const origin = new URL(base).origin;
+  await page.route(`${LAB}/**`, async (route) => {
+    const req = route.request(), url = new URL(req.url()), method = req.method();
+    const cors = { "access-control-allow-origin": origin, vary: "Origin", "cache-control": "no-store" };
+    const send = (status, body) => route.fulfill({ status, headers: cors, contentType: "application/json", body: body === undefined ? undefined : JSON.stringify(body) }).catch(() => {});
+    api.calls.push({ method, path: url.pathname + url.search, body: req.postData(), cookie: req.headers().cookie });
+    if (method === "OPTIONS") return route.fulfill({ status: 204, headers: { ...cors, "access-control-allow-methods": "POST, DELETE", "access-control-allow-headers": "content-type" } });
+    if (api.mode === "down") return route.abort("failed");
+    if (api.mode === "slow") return setTimeout(() => send(200, { afterstep: { total: api.total, week: 1 } }), 8000);
+    if (api.mode === "resting") return method === "GET" && url.searchParams.has("quiet") ? route.fulfill({ status: 204, headers: cors }) : send(503, { error: "Likes are resting right now. Try again later." });
+    if (method === "GET" && url.pathname === "/api/likes") return send(200, { afterstep: { total: api.total, week: 3 }, inkchime: { total: 4, week: 1 } });
+    if (url.pathname !== "/api/likes/afterstep") return send(404, { error: "Unknown project." });
+    if (api.delay) await new Promise((r) => setTimeout(r, api.delay));
+    const forced = api.next;
+    api.next = null;
+    if (forced === 429) return send(429, { error: "That's a lot of likes. Try again in a minute." });
+    const counts = () => ({ total: api.total, week: 3 });
+    if (method === "POST") {
+      if (forced === 409) return send(409, { error: "This network already liked it today.", ...counts() });
+      const receipt = [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, "0")).join("");
+      api.receipts.push(receipt);
+      api.total++;
+      return send(200, { receipt, ...counts() });
+    }
+    if (method === "DELETE") {
+      const { receipt } = JSON.parse(req.postData() || "{}");
+      if (!api.receipts.includes(receipt)) return send(404, { error: "That like wasn't found.", ...counts() });
+      api.receipts = api.receipts.filter((r) => r !== receipt);
+      api.total--;
+      return send(200, { ok: true, ...counts() });
+    }
+    return send(405, { error: "Use POST or DELETE." });
+  });
+  return api;
+}
+
+/** A new page with the like API mocked (working, 12 likes, unless `likes` says
+ *  otherwise) that fails the run on a request to anywhere else. */
+async function newPage(browser, opts, likes = {}) {
+  const page = await browser.newPage(opts);
+  const own = new URL(base).origin;
+  page.on("request", (r) => {
+    const u = r.url();
+    if (u.startsWith("data:") || u.startsWith("blob:") || new URL(u).origin === own || FONTS.test(u)) return;
+    if (!u.startsWith(`${LAB}/api/likes`)) fail(`request to somewhere other than Afterstep and the like API: ${u}`);
+  });
+  page.likes = await mockLikes(page, likes);
+  return page;
+}
+
+// Liking, reloading and unliking (also on a later day, by the stored receipt),
+// the win dialog's heart, 409 and 429, keyboard and labels, no cookies; the page
+// is no taller with the heart at 390x844 (lessons and today's puzzle, with and
+// without touch); and with the API resting (503), unreachable or slow, the game
+// plays, nothing waits, the heart never shows and nothing errors.
+async function likesFlow(browser) {
+  const name = "likes";
+  const desk = await newPage(browser, { viewport: { width: 1280, height: 900 } });
+  const api = desk.likes;
+  // The only console errors allowed: the browser's own lines for the 409 and 429 answers below.
+  desk.on("console", (m) => m.type() === "error" && !/status of (409|429)/.test(m.text()) && fail(`${name}: console error: ${m.text()}`));
+  desk.on("pageerror", (e) => fail(`${name}: page error: ${e.message}`));
+  await desk.goto(base, { waitUntil: "networkidle" });
+  await desk.waitForSelector(".cell", { timeout: 8000 });
+  const heart = (sel = "#like-foot") => desk.evaluate((sel) => {
+    const b = document.querySelector(sel);
+    return { shown: !!b.offsetParent, pressed: b.getAttribute("aria-pressed"), label: b.getAttribute("aria-label"), n: b.querySelector(".like-n").textContent };
+  }, sel);
+  const stored = () => desk.evaluate(() => JSON.parse(localStorage.getItem("afterstep:like") || "null"));
+  await desk.waitForSelector("#like-foot:not([hidden])", { timeout: 3000 }).catch(() => fail(`${name}: the footer heart should show once the counts load`));
+  let h = await heart();
+  if (h.label !== "Like Afterstep, 12 likes" || h.pressed !== "false" || h.n !== "12") fail(`${name}: the heart should read "Like Afterstep, 12 likes", not pressed (got ${JSON.stringify(h)})`);
+  if (api.calls[0]?.path !== "/api/likes?quiet=1") fail(`${name}: counts should be asked for quietly, asked ${api.calls[0]?.path}`);
+
+  // Keyboard: Tab from the board reaches the heart; Enter likes it, at once, before the API answers.
+  await desk.focus("#board");
+  for (let i = 0; i < 20 && (await desk.evaluate(() => document.activeElement.id)) !== "like-foot"; i++) await desk.keyboard.press("Tab");
+  if ((await desk.evaluate(() => document.activeElement.id)) !== "like-foot") fail(`${name}: Tab from the board should reach the heart`);
+  api.delay = 400;
+  await desk.keyboard.press("Enter");
+  h = await heart();
+  if (h.pressed !== "true" || h.label !== "Like Afterstep, 13 likes") fail(`${name}: liking should show at once (got ${JSON.stringify(h)})`);
+  await desk.waitForFunction(() => !document.querySelector("#like-foot").hasAttribute("aria-busy"));
+  api.delay = 0;
+  if ((await desk.evaluate(() => document.activeElement.id)) !== "like-foot") fail(`${name}: a keyboard like should keep focus on the heart`);
+  const s = await stored();
+  if (!s?.liked || s.receipt !== api.receipts[0]) fail(`${name}: the like's receipt should be stored with the liked state (stored ${JSON.stringify(s)})`);
+  await desk.locator(".foot").screenshot({ path: join(out, `${name}-foot-liked.png`) });
+
+  // A reload keeps it.
+  await desk.reload({ waitUntil: "networkidle" });
+  await desk.waitForSelector("#like-foot:not([hidden])", { timeout: 3000 }).catch(() => {});
+  h = await heart();
+  if (h.pressed !== "true" || h.label !== "Like Afterstep, 13 likes") fail(`${name}: the like should survive a reload (got ${JSON.stringify(h)})`);
+
+  // Unlike by mouse: the stored receipt goes with DELETE, and focus goes back to the board.
+  await desk.click("#like-foot");
+  await desk.waitForFunction(() => !document.querySelector("#like-foot").hasAttribute("aria-busy"));
+  const del = api.calls.findLast((c) => c.method === "DELETE");
+  if (!del || JSON.parse(del.body).receipt !== s?.receipt) fail(`${name}: unliking should send the stored receipt (sent ${del?.body})`);
+  h = await heart();
+  if (h.pressed !== "false" || h.label !== "Like Afterstep, 12 likes") fail(`${name}: unliking should show 12, not pressed (got ${JSON.stringify(h)})`);
+  if ((await stored()) !== null) fail(`${name}: unliking should forget the receipt`);
+  if ((await desk.evaluate(() => document.activeElement.id)) !== "board") fail(`${name}: clicking the heart should hand focus back to the board`);
+
+  // A later day: like, then pretend the date moved on. The receipt has no date, so unlike still works.
+  await desk.click("#like-foot");
+  await desk.waitForFunction(() => document.querySelector("#like-foot").getAttribute("aria-pressed") === "true" && !document.querySelector("#like-foot").hasAttribute("aria-busy"));
+  await desk.clock.install({ time: new Date(Date.now() + 3 * 24 * 3600 * 1000) }).catch(() => {});
+  await desk.reload({ waitUntil: "load" });
+  await desk.waitForSelector("#like-foot:not([hidden])", { timeout: 3000 }).catch(() => {});
+  await desk.click("#like-foot");
+  await desk.waitForFunction(() => !document.querySelector("#like-foot").hasAttribute("aria-busy"));
+  if ((await heart()).pressed !== "false" || api.receipts.length) fail(`${name}: unliking three days later should work by the stored receipt (${JSON.stringify(await heart())}, server still has ${api.receipts.length})`);
+  await desk.close();
+
+  // 409 and 429 roll back with a short note; the win dialog's heart and the footer's agree.
+  const day = await newPage(browser, { viewport: { width: 1280, height: 900 } });
+  day.on("console", (m) => m.type() === "error" && !/status of (409|429)/.test(m.text()) && fail(`${name}: console error: ${m.text()}`));
+  day.on("pageerror", (e) => fail(`${name}: page error: ${e.message}`));
+  await day.goto(base, { waitUntil: "networkidle" });
+  await day.waitForSelector(".cell", { timeout: 8000 });
+  await day.click('[data-nav="today"]');
+  await day.waitForFunction(() => document.querySelector("#level-title").textContent.startsWith("Puzzle "));
+  await play(day, level.solution);
+  if (!(await dialogOpens(day))) fail(`${name}: today's puzzle not solved`);
+  const dlg = await day.evaluate(() => ({ ask: document.querySelector("#win-like").offsetParent ? document.querySelector("#win-like-ask").textContent : null, focus: document.activeElement.id }));
+  if (dlg.ask !== "Enjoyed today's puzzle?") fail(`${name}: the win dialog should ask "Enjoyed today's puzzle?" with its heart (got ${dlg.ask})`);
+  if (dlg.focus !== "share") fail(`${name}: the win dialog should still open on Copy result, "${dlg.focus}" has focus`);
+  day.likes.next = 409;
+  await day.click("#like-win");
+  await day.waitForFunction(() => !document.querySelector("#like-win").hasAttribute("aria-busy"));
+  const n409 = await day.evaluate(() => ({ pressed: document.querySelector("#like-win").getAttribute("aria-pressed"), note: document.querySelector(".win-like-note").textContent, shown: !!document.querySelector(".win-like-note").offsetParent, live: document.querySelector("#like-live").textContent }));
+  if (n409.pressed !== "false") fail(`${name}: a 409 should roll the like back`);
+  if (!n409.shown || !/already liked it today/.test(n409.note) || n409.live !== n409.note) fail(`${name}: a 409 should say so politely under the heart and to screen readers (${JSON.stringify(n409)})`);
+  await day.screenshot({ path: join(out, `${name}-dialog-409.png`) });
+  await day.click("#like-win");
+  await day.waitForFunction(() => !document.querySelector("#like-win").hasAttribute("aria-busy"));
+  const both = await day.evaluate(() => [...document.querySelectorAll(".like")].map((b) => b.getAttribute("aria-pressed") + " " + b.getAttribute("aria-label")));
+  if (both.join() !== "true Like Afterstep, 13 likes,true Like Afterstep, 13 likes") fail(`${name}: liking in the dialog should show in both hearts, got ${JSON.stringify(both)}`);
+  if (await day.isVisible(".win-like-note")) fail(`${name}: the 409 note should go once a like goes through`);
+  await day.screenshot({ path: join(out, `${name}-dialog-liked.png`) });
+  await day.keyboard.press("Escape");
+  day.likes.next = 429;
+  await day.click("#like-foot");
+  await day.waitForFunction(() => !document.querySelector("#like-foot").hasAttribute("aria-busy"));
+  const n429 = await day.evaluate(() => ({ pressed: document.querySelector("#like-foot").getAttribute("aria-pressed"), note: document.querySelector(".foot-like-note").textContent, shown: !!document.querySelector(".foot-like-note").offsetParent }));
+  if (n429.pressed !== "true" || !n429.shown || !/in a minute/.test(n429.note)) fail(`${name}: a 429 on unlike should keep the like and ask to try again in a minute (${JSON.stringify(n429)})`);
+  await day.screenshot({ path: join(out, `${name}-foot-429.png`) });
+  const cookies = await day.context().cookies();
+  if (cookies.length || (await day.evaluate(() => document.cookie)) || day.likes.calls.some((c) => c.cookie)) fail(`${name}: there should be no cookies (${JSON.stringify(cookies)})`);
+  await day.close();
+
+  // 390x844: the heart pushes nothing down, in the lessons and today's puzzle, with and without touch.
+  for (const touch of [false, true]) {
+    const boxes = {};
+    for (const mode of ["resting", "ok"]) {
+      const p = await newPage(browser, { viewport: { width: 390, height: 844 }, hasTouch: touch, isMobile: touch }, { mode });
+      await p.goto(base, { waitUntil: "networkidle" });
+      await p.waitForSelector(".cell", { timeout: 8000 });
+      if (mode === "ok") await p.waitForSelector("#like-foot:not([hidden])", { timeout: 3000 }).catch(() => fail(`${name}: no heart at 390px`));
+      const box = () => p.evaluate(() => ({ height: document.documentElement.scrollHeight, footer: Math.round(document.querySelector(".foot").getBoundingClientRect().top + window.scrollY), dpad: Math.round(document.querySelector(".dpad").getBoundingClientRect().top + window.scrollY), board: Math.round(document.querySelector("#board").getBoundingClientRect().top + window.scrollY), wide: document.documentElement.scrollWidth > window.innerWidth }));
+      const lesson = await box();
+      await (touch ? p.tap('[data-nav="today"]') : p.click('[data-nav="today"]'));
+      await p.waitForFunction(() => document.querySelector("#level-title").textContent.startsWith("Puzzle "));
+      boxes[mode] = { lesson, daily: await box() };
+      if (mode === "ok") await p.locator(".foot").screenshot({ path: join(out, `${name}-foot-390${touch ? "-touch" : ""}.png`) });
+      await p.close();
+    }
+    const label = `${name} at 390x844${touch ? " (touch)" : ""}`;
+    for (const where of ["lesson", "daily"]) {
+      const [a, b] = [boxes.resting[where], boxes.ok[where]];
+      if (b.wide) fail(`${label}: the heart makes ${where} scroll sideways`);
+      if (a.height !== b.height || a.footer !== b.footer || a.dpad !== b.dpad || a.board !== b.board) fail(`${label}: the heart moved the ${where} page (${JSON.stringify(a)} -> ${JSON.stringify(b)})`);
+    }
+    console.log(`${label}: page ${boxes.ok.lesson.height}px in lessons and ${boxes.ok.daily.height}px in today's puzzle, with or without the heart`);
+  }
+
+  // Resting (the live hub until its migration), unreachable and slow: the game plays, the heart never shows.
+  for (const mode of ["resting", "down", "slow"]) {
+    const p = await newPage(browser, { viewport: { width: 1280, height: 900 } }, { mode });
+    const label = `${name} with the API ${mode}`;
+    // An unreachable API leaves the browser's own network line; nothing from the page itself.
+    p.on("console", (m) => m.type() === "error" && !(mode === "down" && /^Failed to load resource: net::ERR_FAILED$/.test(m.text())) && fail(`${label}: console error: ${m.text()}`));
+    p.on("pageerror", (e) => fail(`${label}: page error: ${e.message}`));
+    await p.addInitScript(() => {
+      window.__heartSeen = false;
+      const look = () => {
+        if ([...document.querySelectorAll(".like")].some((b) => b.offsetParent && !b.closest("[hidden]"))) window.__heartSeen = true;
+        requestAnimationFrame(look);
+      };
+      requestAnimationFrame(look);
+    });
+    const t0 = Date.now();
+    await p.goto(base, { waitUntil: "load" });
+    if (!(await p.waitForSelector(".cell", { timeout: 3000 }).catch(() => null))) { fail(`${label}: the board should render without waiting for likes`); await p.close(); continue; }
+    const painted = Date.now() - t0;
+    await p.keyboard.press("ArrowRight");
+    const moved = await p.evaluate(() => document.querySelector("#moves").textContent.match(/Moves\s*(\d+)/)?.[1]);
+    if (moved !== "1") fail(`${label}: a move should work right away (moves ${moved})`);
+    await p.waitForTimeout(mode === "slow" ? 7000 : 600); // the slow answer is given up on after 6 s
+    if (await p.evaluate(() => window.__heartSeen)) fail(`${label}: the heart should never show`);
+    if (!p.likes.calls.some((c) => c.path === "/api/likes?quiet=1")) fail(`${label}: the counts should have been asked for`);
+    if (p.likes.calls.some((c) => c.method !== "GET")) fail(`${label}: nothing but the counts should be asked for`);
+    console.log(`${label}: board in ${painted}ms, moves work, no heart`);
+    await p.close();
+  }
+}
+
 const browser = await chromium.launch({ executablePath: browserPath });
 try {
+  await likesFlow(browser);
   await keyboardStart(browser, "desktop-dark", { width: 1280, height: 900 });
   await keysHint(browser, "keys-hint");
   await session(browser, "desktop-dark", { width: 1280, height: 900 }, "dark");
