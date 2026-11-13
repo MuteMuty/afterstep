@@ -204,9 +204,12 @@ function act(a: number) {
   }
 }
 
+// Move count shown in the win dialog; the share text uses it, not live state.
+let winMoves = 0;
+
 function onWin() {
   if (!game) return;
-  const moves = game.moves();
+  const moves = (winMoves = game.moves());
   const par = level.par ?? moves;
   if (mode === "learn") {
     $("win-title").textContent = "Nice";
@@ -312,6 +315,8 @@ const CONTROLS = "button, a[href], input, select, textarea, summary, [role=butto
 window.addEventListener("keydown", (e) => {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   if (document.querySelector<HTMLElement>(".play")!.hidden) return;
+  // The win dialog owns the keyboard (Tab, Enter, Space, Escape) while it's open.
+  if (win.open) return;
   // Space and Enter on a focused control do that control's own job.
   if ((e.code === "Space" || e.code === "Enter") && e.target instanceof Element && e.target.closest(CONTROLS)) return;
   if (e.code in KEYS) {
@@ -335,12 +340,24 @@ board.addEventListener("pointerup", (e) => {
   if (Math.max(Math.abs(dx), Math.abs(dy)) < 18) return;
   act(Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? RIGHT : LEFT) : dy > 0 ? DOWN : UP);
 });
+/** Run a game control's action. After a mouse, touch or pen press, focus goes
+ *  back to the board so Space and the arrows play again; after a keyboard
+ *  press (detail 0, no pointer type) it stays on the control. */
+function control(b: HTMLElement, run: () => void) {
+  b.onclick = (e) => {
+    run();
+    // Browsers whose click isn't a PointerEvent still report detail 0 for keys.
+    const type = (e as PointerEvent).pointerType;
+    const byPointer = type === undefined ? e.detail > 0 : type !== "";
+    if (byPointer) board.focus({ preventScroll: true });
+  };
+}
 document.querySelectorAll<HTMLButtonElement>("[data-move]").forEach((b) => {
-  b.onclick = () => act(Number(b.dataset.move));
+  control(b, () => act(Number(b.dataset.move)));
 });
-$("wait").onclick = () => act(WAIT);
-$("undo").onclick = () => { if (game?.undo()) render(); };
-$("restart").onclick = () => { game?.reset(); render(); };
+control($("wait"), () => act(WAIT));
+control($("undo"), () => { if (game?.undo()) render(); });
+control($("restart"), () => { game?.reset(); render(); });
 document.querySelectorAll<HTMLButtonElement>("[data-nav]").forEach((b) => {
   b.onclick = () => {
     if (b.dataset.nav === "today") openDaily();
@@ -362,8 +379,7 @@ $("next").onclick = () => {
   } else openArchive();
 };
 $("share").onclick = async () => {
-  if (!game) return;
-  const moves = game.moves();
+  const moves = winMoves;
   const text = `Afterstep #${level.id}: ${moves} moves (par ${level.par})${moves <= (level.par ?? 0) ? " ★" : ""}\nhttps://afterstep.brightloopapps.com`;
   try {
     await navigator.clipboard.writeText(text);
