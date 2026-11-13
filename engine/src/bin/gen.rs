@@ -2,9 +2,10 @@
 //!
 //! Usage:
 //!   afterstep-gen daily <out_dir> <from YYYY-MM-DD> <days>   generate missing daily levels
-//!   afterstep-gen check <level.json>...                        verify levels (solvable, needs echo)
+//!   afterstep-gen check <level.json>...                        verify levels (solvable, needs echo) and print each nudge
 
 use afterstep_engine::gen::{generate, Params, Rng};
+use afterstep_engine::nudge::nudge;
 use afterstep_engine::solver::{solve, solve_without_echo};
 use afterstep_engine::Level;
 use serde_json::{json, Value};
@@ -99,7 +100,7 @@ fn daily(out: &str, from: &str, days: i64) {
 }
 
 fn check(files: &[String]) {
-    let mut bad = 0;
+    let (mut bad, mut generic) = (0, 0);
     for f in files {
         let v: Value = serde_json::from_str(&std::fs::read_to_string(f).unwrap()).unwrap();
         let rows: Vec<&str> = v["grid"].as_array().unwrap().iter().map(|r| r.as_str().unwrap()).collect();
@@ -113,17 +114,22 @@ fn check(files: &[String]) {
             Some(s) => par.map_or(true, |p| p == s.moves.len()) && (!needs_echo || alone.is_none()),
             None => false,
         };
+        let n = nudge(&level, 2_000_000);
+        generic += n.is_generic() as usize;
         println!(
-            "{} {f}: par {:?} solver {:?} alone-solvable {}",
+            "{} {f}: par {:?} solver {:?} alone-solvable {} nudge {:?}{}",
             if ok { "ok " } else { "BAD" },
             par,
             sol.as_ref().map(|s| s.moves.as_str()),
-            alone.is_some()
+            alone.is_some(),
+            n.text(),
+            if n.is_generic() { " (generic)" } else { "" }
         );
         if !ok {
             bad += 1;
         }
     }
+    println!("{} levels, {bad} bad, {generic} with a generic nudge", files.len());
     if bad > 0 {
         exit(1);
     }

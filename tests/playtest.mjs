@@ -1,9 +1,11 @@
 // Afterstep playtest: plays lessons 1-2 and today's puzzle (with the solver's
 // solution) in a real browser, at desktop-dark and phone-light sizes, and
 // checks the keyboard-first start (board focus, ring, Tab order, click-then-key)
-// on desktop and tapping the controls on a touch phone. Hint check: follows
-// hints through lessons 1-3, gets stuck in lesson 4 and takes the offered undo,
-// and checks the hint count on today's puzzle (and its absence on a past one).
+// on desktop and tapping the controls on a touch phone. Hint check: the first
+// hint on each puzzle is a nudge about its idea (no move marked, not counted);
+// follows hints through lessons 1-3, gets stuck in lesson 4 and takes the
+// offered undo, and checks the hint count on today's puzzle (and its absence on
+// a past one). On the touch phone, today's nudge fits on one line.
 //
 // Usage: node tests/playtest.mjs <baseUrl>
 // Env:   PLAYTEST_BROWSER  Chromium-based browser executable (default: Brave)
@@ -207,8 +209,8 @@ async function touchControls(browser, name, viewport) {
   if (withHint.dpad !== withoutHint.dpad) fail(`${name}: Hint button moved the d-pad from ${withoutHint.dpad} to ${withHint.dpad}`);
 
   await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
-  const steps = [["#wait", 1], ["#hint", 1], ['[data-move="3"]', 2], ["#undo", 1], ["#restart", 0]];
-  for (const [sel, want] of steps) {
+  const steps = [["#wait", 1], ["#hint", 1, "nudge"], ["#hint", 1, "move"], ['[data-move="3"]', 2], ["#undo", 1], ["#restart", 0]];
+  for (const [sel, want, kind] of steps) {
     const y0 = await page.evaluate(() => window.scrollY);
     await page.tap(sel);
     await page.waitForTimeout(100);
@@ -218,14 +220,39 @@ async function touchControls(browser, name, viewport) {
     const { id, ring } = await page.evaluate(() => ({ id: document.activeElement.id, ring: document.querySelector("#board").matches(":focus-visible") }));
     if (id !== "board") fail(`${name}: tapping ${sel} should hand focus back to the board, "${id}" has it`);
     if (ring) fail(`${name}: tapping ${sel} left a focus ring on the board`);
-    if (sel === "#hint") {
-      if (!(await page.isVisible("#board .hint-mark"))) fail(`${name}: tapping Hint should mark the next move on the board`);
-      if (!(await page.textContent("#hint-note"))?.startsWith("Hint: ")) fail(`${name}: tapping Hint should say the next move`);
+    if (kind === "nudge") {
+      const text = await page.textContent("#hint-note");
+      if (text !== "Stand on plate A to open its door.") fail(`${name}: first Hint tap in lesson 1 should nudge, got "${text}"`);
+      if (await page.isVisible("#board .hint-mark")) fail(`${name}: a nudge should not mark a move`);
+      if ((await layout()).dpad !== withHint.dpad) fail(`${name}: showing a nudge moved the d-pad`);
+      await page.screenshot({ path: join(out, `${name}-nudge.png`) });
+    } else if (kind === "move") {
+      if (!(await page.isVisible("#board .hint-mark"))) fail(`${name}: tapping Hint again should mark the next move on the board`);
+      if (!(await page.textContent("#hint-note"))?.startsWith("Hint: ")) fail(`${name}: tapping Hint again should say the next move`);
       if ((await layout()).dpad !== withHint.dpad) fail(`${name}: showing a hint moved the d-pad`);
       await page.screenshot({ path: join(out, `${name}-hint.png`) });
     }
   }
   await page.screenshot({ path: join(out, `${name}-after-taps.png`) });
+
+  // Today's puzzle: its nudge fits on one line and leaves the d-pad where it was.
+  await page.tap('[data-nav="today"]');
+  await page.waitForFunction(() => document.querySelector("#level-title").textContent.startsWith("Puzzle "));
+  const before = await layout();
+  await page.tap("#hint");
+  await page.waitForSelector("#hint-note:not([hidden])");
+  const fit = await page.evaluate(() => {
+    const n = document.querySelector("#hint-note"), s = document.querySelector(".status");
+    const r = n.getBoundingClientRect(), t = document.createRange();
+    t.selectNodeContents(n);
+    const text = t.getBoundingClientRect();
+    return { text: n.textContent, inside: text.left >= r.left - 0.5 && text.right <= r.right + 0.5, page: document.documentElement.scrollWidth <= window.innerWidth, statusW: s.clientWidth, textW: Math.round(text.width) };
+  });
+  if (fit.text.startsWith("Hint: ") || !fit.text.endsWith(".")) fail(`${name}: today's first hint should be a nudge sentence, got "${fit.text}"`);
+  if (!fit.inside || !fit.page) fail(`${name}: today's nudge "${fit.text}" is ${fit.textW}px wide, the status line ${fit.statusW}px`);
+  if ((await layout()).dpad !== before.dpad) fail(`${name}: today's nudge moved the d-pad`);
+  await page.screenshot({ path: join(out, `${name}-daily-nudge.png`) });
+  console.log(`${name}: today's nudge "${fit.text}" (${fit.textW}px of ${fit.statusW}px)`);
   await page.close();
 }
 
@@ -243,11 +270,28 @@ async function hintFlow(browser, name, viewport) {
   }
   const moves = async () => Number((await page.textContent("#moves")).match(/Moves\s*(\d+)/)?.[1]);
   const noteText = () => page.textContent("#hint-note");
+  // The first H on a puzzle: a nudge sentence, no move marked, no move made.
+  const expectNudge = async (label, want) => {
+    const m0 = await moves();
+    await page.keyboard.press("KeyH");
+    const text = await noteText();
+    if (!(await page.isVisible("#hint-note")) || (want ? text !== want : text.startsWith("Hint: ") || !text.endsWith(".")))
+      fail(`${name}: ${label}: first hint should nudge${want ? ` "${want}"` : ""}, got "${text}"`);
+    if (await page.isVisible("#board .hint-mark")) fail(`${name}: ${label}: a nudge should not mark a move`);
+    if (await page.locator(".hinted").count()) fail(`${name}: ${label}: a nudge should not light up a button`);
+    if ((await moves()) !== m0) fail(`${name}: ${label}: a nudge should not make a move`);
+    const live = await page.evaluate(() => document.querySelector("#hint-note").closest("[aria-live]")?.getAttribute("aria-live"));
+    if (live !== "polite") fail(`${name}: ${label}: the nudge should be announced like other hints (aria-live ${live})`);
+  };
   // Press H, then the hinted move, until the level is won.
   const followHints = async (label) => {
     for (let i = 0; i < 80; i++) {
       await page.keyboard.press("KeyH");
       if (!(await page.isVisible("#hint-note"))) return dialogOpens(page); // won: H does nothing
+      if (!(await noteText()).startsWith("Hint: ")) {
+        fail(`${name}: ${label}: after the nudge every hint should be a move, got "${await noteText()}"`);
+        return false;
+      }
       const m = await page.getAttribute("#board .hint-mark", "data-hint");
       if (!(await page.isVisible("#board .hint-mark")) || m === null) {
         fail(`${name}: ${label}: hint showed "${await noteText()}" but no move on the board`);
@@ -258,7 +302,9 @@ async function hintFlow(browser, name, viewport) {
     return false;
   };
 
-  for (const [lesson, best] of [[1, 5], [2, 6], [3, 12]]) {
+  const echoA = "Let your echo hold plate A for you.";
+  for (const [lesson, best, nudge] of [[1, 5, "Stand on plate A to open its door."], [2, 6, echoA], [3, 12, echoA]]) {
+    await expectNudge(`lesson ${lesson}`, nudge);
     if (!(await followHints(`lesson ${lesson}`))) {
       fail(`${name}: following hints did not solve lesson ${lesson}`);
       return page.close();
@@ -269,6 +315,7 @@ async function hintFlow(browser, name, viewport) {
   }
 
   // Lesson 4: after RDDD..UD.. the echo can no longer hold plate B for you.
+  // Saying so comes before the nudge, which waits for a winnable position.
   await play(page, "RDDD..UD..");
   await page.keyboard.press("KeyH");
   if ((await noteText()) !== "You can't win from here. Undo 3 moves?") fail(`${name}: lost position should offer "Undo 3 moves?", got "${await noteText()}"`);
@@ -277,19 +324,21 @@ async function hintFlow(browser, name, viewport) {
   await page.click("#hint-note button");
   if ((await moves()) !== 7) fail(`${name}: the offered undo should go back to move 7, at ${await moves()}`);
   if ((await page.evaluate(() => document.activeElement.id)) !== "board") fail(`${name}: after the offered undo the board should have focus`);
-  await page.keyboard.press("KeyH");
-  if (!(await noteText())?.startsWith("Hint: ")) fail(`${name}: after the offered undo the hint should give a move, got "${await noteText()}"`);
+  await expectNudge("lesson 4 after the undo", "Let your echo hold plate B for you.");
+  await page.screenshot({ path: join(out, `${name}-nudge.png`) });
   if (!(await followHints("lesson 4"))) {
     fail(`${name}: following hints after the undo did not solve lesson 4`);
     return page.close();
   }
   await page.click("#next"); // "Play today's puzzle"
 
-  // Today's puzzle: one hint (pressed twice at the same spot) for the last move.
+  // Today's puzzle: a nudge, then one hint (pressed twice at the same spot) for
+  // the last move. Only the move counts: "with 1 hint".
   await page.waitForSelector(".cell");
   await play(page, level.solution.slice(0, -1));
-  await page.keyboard.press("KeyH");
+  await expectNudge("today's puzzle");
   await page.click("#hint");
+  await page.keyboard.press("KeyH");
   const last = level.solution.at(-1);
   if ((await page.getAttribute("#board .hint-mark", "data-hint")) !== String("UDLR.".indexOf(last)))
     fail(`${name}: hint before the last move should point at ${last}`);
@@ -322,6 +371,7 @@ async function hintFlow(browser, name, viewport) {
     await page.evaluate((id) => [...document.querySelectorAll("#archive-list button")].find((b) => b.textContent.startsWith(`Puzzle ${id} `)).click(), past.id);
     await page.waitForFunction((id) => document.querySelector("#level-title").textContent === `Puzzle ${id}`, past.id);
     await play(page, past.solution.slice(0, -1));
+    await expectNudge(`past puzzle ${pastDate}`);
     await page.keyboard.press("KeyH");
     await page.keyboard.press(KEY[past.solution.at(-1)]);
     if (!(await dialogOpens(page))) fail(`${name}: past puzzle ${pastDate} not won after a hint`);

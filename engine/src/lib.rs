@@ -16,6 +16,7 @@
 //! 4. You win when you stand on the exit.
 
 pub mod gen;
+pub mod nudge;
 pub mod solver;
 
 #[cfg(target_arch = "wasm32")]

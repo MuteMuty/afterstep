@@ -82,6 +82,11 @@ impl State {
         }
     }
 
+    /// True if, going from `self` to `next`, the echo tried to move and was blocked.
+    fn echo_bumps(self, next: State) -> bool {
+        self.echo != NONE && self.oldest() != Action::Wait && next.echo == self.echo
+    }
+
     /// The state after taking `a`, or `None` if the move is blocked.
     #[inline]
     fn next(self, level: &Level, a: Action, with_echo: bool) -> Option<State> {
@@ -107,15 +112,26 @@ impl State {
 
 /// Solve with the echo (normal rules). `limit` caps explored states.
 pub fn solve(level: &Level, limit: usize) -> Option<Solution> {
-    search(level, true, limit)
+    search(level, true, false, limit).ok().flatten()
 }
 
 /// Solve as if the echo never appears: used to prove a level actually needs the echo.
 pub fn solve_without_echo(level: &Level, limit: usize) -> Option<Solution> {
-    search(level, false, limit)
+    search(level, false, false, limit).ok().flatten()
 }
 
-fn search(level: &Level, with_echo: bool, limit: usize) -> Option<Solution> {
+/// The search explored `limit` states without settling the question.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OutOfBudget;
+
+/// Solve without ever letting the echo bump into anything (it never falls out
+/// of step): used to prove a level needs the echo to bump on purpose.
+/// `Ok(None)` means no such win exists at all.
+pub fn solve_in_step(level: &Level, limit: usize) -> Result<Option<Solution>, OutOfBudget> {
+    search(level, true, true, limit)
+}
+
+fn search(level: &Level, with_echo: bool, in_step: bool, limit: usize) -> Result<Option<Solution>, OutOfBudget> {
     let start = State { player: level.start as u8, echo: NONE, len: 0, queue: 0 };
     let mut parent: HashMap<State, (State, Action), Fast> = HashMap::with_capacity_and_hasher(1 << 14, Fast::default());
     let mut q = VecDeque::new();
@@ -132,14 +148,14 @@ fn search(level: &Level, with_echo: bool, limit: usize) -> Option<Solution> {
                 cur = p;
             }
             moves.reverse();
-            return Some(Solution { moves: moves.into_iter().collect(), explored: parent.len() + 1 });
+            return Ok(Some(Solution { moves: moves.into_iter().collect(), explored: parent.len() + 1 }));
         }
         if parent.len() > limit {
-            return None;
+            return Err(OutOfBudget);
         }
         for a in Action::ALL {
             if let Some(ns) = s.next(level, a, with_echo) {
-                if ns == start {
+                if ns == start || (in_step && s.echo_bumps(ns)) {
                     continue;
                 }
                 if let std::collections::hash_map::Entry::Vacant(v) = parent.entry(ns) {
@@ -149,7 +165,7 @@ fn search(level: &Level, with_echo: bool, limit: usize) -> Option<Solution> {
             }
         }
     }
-    None
+    Ok(None)
 }
 
 /// What to do next from a game in progress.
@@ -257,6 +273,21 @@ mod tests {
         assert!(solve_without_echo(&l, 100_000).is_none());
         let s = solve(&l, 100_000).expect("solvable with echo");
         assert!(Game::verify(&l, &s.moves), "solution {} must replay", s.moves);
+    }
+
+    #[test]
+    fn in_step_solve_never_lets_the_echo_bump() {
+        // Lesson 2 is won with the echo in step all the way.
+        let l = Level::parse(&["S.A", "#.#", "#a#", "#E#"], 2).unwrap();
+        let s = solve_in_step(&l, 100_000).unwrap().expect("a bump-free win");
+        assert_eq!(s.moves.len(), solve(&l, 100_000).unwrap().moves.len());
+        let mut g = Game::new(l.clone());
+        for c in s.moves.chars() {
+            assert!(g.try_step(Action::from_char(c).unwrap()));
+        }
+        assert!(g.won() && g.echo_blocked.iter().all(|b| !b));
+        assert!(matches!(solve_in_step(&l, 3), Err(OutOfBudget)));
+        assert_eq!(solve_in_step(&Level::parse(&["S#E"], 2).unwrap(), 100_000).map(|s| s.is_some()), Ok(false));
     }
 
     #[test]
