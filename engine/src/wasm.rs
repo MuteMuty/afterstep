@@ -3,6 +3,9 @@
 use crate::{solver, Action, Game, Level};
 use wasm_bindgen::prelude::*;
 
+/// States the hint search may explore (the hardest dailies need about 400k from the start).
+const HINT_LIMIT: usize = 2_000_000;
+
 #[wasm_bindgen]
 pub struct WasmGame {
     game: Game,
@@ -89,20 +92,21 @@ impl WasmGame {
         true
     }
 
-    /// Shortest solution from the *start* (used for hints). Empty if none found.
+    /// Shortest solution from the start. Empty if none found.
     pub fn solve(&self) -> String {
         solver::solve(&self.game.level, 300_000).map(|s| s.moves).unwrap_or_default()
     }
 
-    /// Hint from the current position: replay history + search would be expensive, so
-    /// we return the next move of the optimal solution if the player is still on it.
-    pub fn hint(&self) -> u8 {
-        let sol = self.solve();
-        let hist = self.history();
-        if sol.starts_with(&hist) {
-            sol[hist.len()..].chars().next().and_then(Action::from_char).map_or(255, |a| a as u8)
-        } else {
-            255
+    /// The next move from wherever the player is now: 0-4 is the action to take
+    /// (0 up, 1 down, 2 left, 3 right, 4 wait). A negative number `-n` means no win
+    /// is possible from here and undoing `n` moves reaches the last winnable position.
+    /// 5 means the game is already won, 6 that the search gave up.
+    pub fn hint(&self) -> i32 {
+        match solver::hint(&self.game, HINT_LIMIT) {
+            solver::Hint::Move { action, .. } => action as i32,
+            solver::Hint::Stuck { undo } => -(undo as i32),
+            solver::Hint::Won => 5,
+            solver::Hint::Unknown => 6,
         }
     }
 }

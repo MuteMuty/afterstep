@@ -1,14 +1,16 @@
 // Afterstep playtest: plays lessons 1-2 and today's puzzle (with the solver's
 // solution) in a real browser, at desktop-dark and phone-light sizes, and
 // checks the keyboard-first start (board focus, ring, Tab order, click-then-key)
-// on desktop and tapping the controls on a touch phone.
+// on desktop and tapping the controls on a touch phone. Hint check: follows
+// hints through lessons 1-3, gets stuck in lesson 4 and takes the offered undo,
+// and checks the hint count on today's puzzle (and its absence on a past one).
 //
 // Usage: node tests/playtest.mjs <baseUrl>
 // Env:   PLAYTEST_BROWSER  Chromium-based browser executable (default: Brave)
 //        PLAYTEST_OUT      screenshot folder (default: ./playtest-out)
 // Exit:  0 = pass, 1 = fail (reasons printed)
 import { chromium } from "playwright";
-import { readFileSync, mkdirSync } from "node:fs";
+import { readFileSync, readdirSync, mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join, dirname } from "node:path";
 
@@ -186,8 +188,26 @@ async function touchControls(browser, name, viewport) {
     return page.close();
   }
   const moves = async () => Number((await page.textContent("#moves")).match(/Moves\s*(\d+)/)?.[1]);
+
+  // The Hint button shares the controls row: one line, and the d-pad sits
+  // exactly where it would without it (and stays put while a hint shows).
+  const layout = () => page.evaluate(() => {
+    const c = document.querySelector(".controls");
+    return {
+      dpad: document.querySelector(".dpad").getBoundingClientRect().top + window.scrollY,
+      rows: new Set([...c.querySelectorAll("button")].map((b) => Math.round(b.getBoundingClientRect().top))).size,
+      overflow: c.scrollWidth > c.clientWidth,
+    };
+  });
+  const withHint = await layout();
+  await page.evaluate(() => (document.querySelector("#hint").style.display = "none"));
+  const withoutHint = await layout();
+  await page.evaluate(() => (document.querySelector("#hint").style.display = ""));
+  if (withHint.rows !== 1 || withHint.overflow) fail(`${name}: game controls should fit on one row (${withHint.rows} rows, overflow ${withHint.overflow})`);
+  if (withHint.dpad !== withoutHint.dpad) fail(`${name}: Hint button moved the d-pad from ${withoutHint.dpad} to ${withHint.dpad}`);
+
   await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
-  const steps = [["#wait", 1], ['[data-move="3"]', 2], ["#undo", 1], ["#restart", 0]];
+  const steps = [["#wait", 1], ["#hint", 1], ['[data-move="3"]', 2], ["#undo", 1], ["#restart", 0]];
   for (const [sel, want] of steps) {
     const y0 = await page.evaluate(() => window.scrollY);
     await page.tap(sel);
@@ -198,8 +218,119 @@ async function touchControls(browser, name, viewport) {
     const { id, ring } = await page.evaluate(() => ({ id: document.activeElement.id, ring: document.querySelector("#board").matches(":focus-visible") }));
     if (id !== "board") fail(`${name}: tapping ${sel} should hand focus back to the board, "${id}" has it`);
     if (ring) fail(`${name}: tapping ${sel} left a focus ring on the board`);
+    if (sel === "#hint") {
+      if (!(await page.isVisible("#board .hint-mark"))) fail(`${name}: tapping Hint should mark the next move on the board`);
+      if (!(await page.textContent("#hint-note"))?.startsWith("Hint: ")) fail(`${name}: tapping Hint should say the next move`);
+      if ((await layout()).dpad !== withHint.dpad) fail(`${name}: showing a hint moved the d-pad`);
+      await page.screenshot({ path: join(out, `${name}-hint.png`) });
+    }
   }
   await page.screenshot({ path: join(out, `${name}-after-taps.png`) });
+  await page.close();
+}
+
+// Hints: follow them through lessons 1-3 (each solved in its shortest number of
+// moves), get stuck in lesson 4 and take the offered undo, then use one hint on
+// today's puzzle (counted in the result) and one on a past puzzle (not counted).
+async function hintFlow(browser, name, viewport) {
+  const page = await browser.newPage({ viewport });
+  page.on("console", (m) => m.type() === "error" && fail(`${name}: console error: ${m.text()}`));
+  page.on("pageerror", (e) => fail(`${name}: page error: ${e.message}`));
+  await page.goto(base, { waitUntil: "networkidle" }).catch((e) => fail(`${name}: could not load ${base}: ${e.message}`));
+  if (!(await page.waitForSelector(".cell", { timeout: 8000 }).catch(() => null))) {
+    fail(`${name}: board never rendered`);
+    return page.close();
+  }
+  const moves = async () => Number((await page.textContent("#moves")).match(/Moves\s*(\d+)/)?.[1]);
+  const noteText = () => page.textContent("#hint-note");
+  // Press H, then the hinted move, until the level is won.
+  const followHints = async (label) => {
+    for (let i = 0; i < 80; i++) {
+      await page.keyboard.press("KeyH");
+      if (!(await page.isVisible("#hint-note"))) return dialogOpens(page); // won: H does nothing
+      const m = await page.getAttribute("#board .hint-mark", "data-hint");
+      if (!(await page.isVisible("#board .hint-mark")) || m === null) {
+        fail(`${name}: ${label}: hint showed "${await noteText()}" but no move on the board`);
+        return false;
+      }
+      await page.keyboard.press(KEY["UDLR."[m]]);
+    }
+    return false;
+  };
+
+  for (const [lesson, best] of [[1, 5], [2, 6], [3, 12]]) {
+    if (!(await followHints(`lesson ${lesson}`))) {
+      fail(`${name}: following hints did not solve lesson ${lesson}`);
+      return page.close();
+    }
+    const body = await page.textContent("#win-body");
+    if (body !== `Solved in ${best} moves.`) fail(`${name}: hints should solve lesson ${lesson} in ${best} moves with nothing about hints, got "${body}"`);
+    await page.click("#next");
+  }
+
+  // Lesson 4: after RDDD..UD.. the echo can no longer hold plate B for you.
+  await play(page, "RDDD..UD..");
+  await page.keyboard.press("KeyH");
+  if ((await noteText()) !== "You can't win from here. Undo 3 moves?") fail(`${name}: lost position should offer "Undo 3 moves?", got "${await noteText()}"`);
+  if (await page.isVisible("#board .hint-mark")) fail(`${name}: a lost position should not mark a move`);
+  await page.screenshot({ path: join(out, `${name}-stuck.png`) });
+  await page.click("#hint-note button");
+  if ((await moves()) !== 7) fail(`${name}: the offered undo should go back to move 7, at ${await moves()}`);
+  if ((await page.evaluate(() => document.activeElement.id)) !== "board") fail(`${name}: after the offered undo the board should have focus`);
+  await page.keyboard.press("KeyH");
+  if (!(await noteText())?.startsWith("Hint: ")) fail(`${name}: after the offered undo the hint should give a move, got "${await noteText()}"`);
+  if (!(await followHints("lesson 4"))) {
+    fail(`${name}: following hints after the undo did not solve lesson 4`);
+    return page.close();
+  }
+  await page.click("#next"); // "Play today's puzzle"
+
+  // Today's puzzle: one hint (pressed twice at the same spot) for the last move.
+  await page.waitForSelector(".cell");
+  await play(page, level.solution.slice(0, -1));
+  await page.keyboard.press("KeyH");
+  await page.click("#hint");
+  const last = level.solution.at(-1);
+  if ((await page.getAttribute("#board .hint-mark", "data-hint")) !== String("UDLR.".indexOf(last)))
+    fail(`${name}: hint before the last move should point at ${last}`);
+  if ((await moves()) !== level.par - 1) fail(`${name}: hints should not count as moves (moves ${await moves()})`);
+  await page.screenshot({ path: join(out, `${name}-daily-hint.png`) });
+  await page.keyboard.press(KEY[last]);
+  if (!(await dialogOpens(page))) {
+    fail(`${name}: today's puzzle not won after following the hint`);
+    return page.close();
+  }
+  const body = await page.textContent("#win-body");
+  if (!body.includes(`in ${level.par} moves with 1 hint.`)) fail(`${name}: win dialog should say "with 1 hint", got "${body}"`);
+  const copy = async () => {
+    await page.evaluate(() => {
+      Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async (t) => { window.__copied = t; } } });
+    });
+    await page.click("#share");
+    return page.evaluate(() => window.__copied ?? "");
+  };
+  const copied = await copy();
+  if (!copied.includes(`: ${level.par} moves with 1 hint (par ${level.par}) ★`)) fail(`${name}: copied result should say "with 1 hint", got "${copied.split("\n")[0]}"`);
+  await page.screenshot({ path: join(out, `${name}-daily-won-hint.png`) });
+  await page.keyboard.press("Escape");
+
+  // A past puzzle: a hint helps, but the result stays as it was.
+  const pastDate = readdirSync(join(repo, "levels/daily")).map((f) => f.replace(".json", "")).filter((d) => d < today).sort()[0];
+  if (pastDate) {
+    const past = JSON.parse(readFileSync(join(repo, "levels/daily", `${pastDate}.json`), "utf8"));
+    await page.click('[data-nav="archive"]');
+    await page.evaluate((id) => [...document.querySelectorAll("#archive-list button")].find((b) => b.textContent.startsWith(`Puzzle ${id} `)).click(), past.id);
+    await page.waitForFunction((id) => document.querySelector("#level-title").textContent === `Puzzle ${id}`, past.id);
+    await play(page, past.solution.slice(0, -1));
+    await page.keyboard.press("KeyH");
+    await page.keyboard.press(KEY[past.solution.at(-1)]);
+    if (!(await dialogOpens(page))) fail(`${name}: past puzzle ${pastDate} not won after a hint`);
+    else {
+      const pastBody = await page.textContent("#win-body");
+      const pastCopy = await copy();
+      if (/hint/.test(pastBody) || /hint/.test(pastCopy)) fail(`${name}: a past puzzle's result should not mention hints ("${pastBody}" / "${pastCopy.split("\n")[0]}")`);
+    }
+  }
   await page.close();
 }
 
@@ -209,6 +340,7 @@ try {
   await session(browser, "desktop-dark", { width: 1280, height: 900 }, "dark");
   await session(browser, "phone-light", { width: 390, height: 844 }, "light");
   await touchControls(browser, "phone-touch", { width: 390, height: 844 });
+  await hintFlow(browser, "desktop-hints", { width: 1280, height: 900 });
 } finally {
   await browser.close();
 }
