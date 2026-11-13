@@ -71,14 +71,40 @@ async function session(browser, name, viewport, colorScheme) {
   await page.waitForTimeout(200);
   await page.screenshot({ path: join(out, `${name}-daily-mid.png`), fullPage: true });
   await play(page, level.solution.slice(half));
-  if (!(await dialogOpens(page))) fail(`${name}: today's puzzle (${today}) not solved by its solution`);
+  const won = await dialogOpens(page);
+  if (!won) fail(`${name}: today's puzzle (${today}) not solved by its solution`);
   else {
     const body = await page.textContent("#win-body");
     if (!body.includes(`${level.par} moves`)) fail(`${name}: expected a ${level.par}-move win, got "${body}"`);
   }
   await page.screenshot({ path: join(out, `${name}-daily-won.png`) });
+  if (won) await winKeys(page, name);
   console.log(`${name}: ${sub}`);
   await page.close();
+}
+
+// With the win dialog open, game keys must leave the board alone, and the
+// copied result must use the winning move count. After Escape, Z and R work.
+async function winKeys(page, name) {
+  const moves = async () => Number((await page.textContent("#moves")).match(/Moves\s*(\d+)/)?.[1]);
+  const won = await moves();
+  for (const k of ["KeyR", "KeyZ", "Backspace", "Period", "ArrowLeft", "KeyD"]) await page.keyboard.press(k);
+  await page.waitForTimeout(200);
+  if ((await moves()) !== won) fail(`${name}: keys behind the win dialog changed moves from ${won} to ${await moves()}`);
+  if (!(await page.isVisible("dialog[open]"))) fail(`${name}: win dialog closed after game keys`);
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async (t) => { window.__copied = t; } } });
+  });
+  await page.click("#share");
+  const copied = await page.evaluate(() => window.__copied ?? "");
+  if (!copied.includes(`: ${level.par} moves (par ${level.par}) ★`))
+    fail(`${name}: copied result should show the ${level.par}-move win, got "${copied.split("\n")[0]}"`);
+  await page.keyboard.press("Escape");
+  if (await page.isVisible("dialog[open]")) fail(`${name}: Escape should close the win dialog`);
+  await page.keyboard.press("KeyZ");
+  if ((await moves()) !== won - 1) fail(`${name}: Z after closing the dialog should undo (moves ${await moves()}, wanted ${won - 1})`);
+  await page.keyboard.press("KeyR");
+  if ((await moves()) !== 0) fail(`${name}: R after closing the dialog should restart (moves ${await moves()})`);
 }
 
 // Keyboard-first start (desktop): the board has focus on load with a visible

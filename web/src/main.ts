@@ -204,9 +204,12 @@ function act(a: number) {
   }
 }
 
+// Move count shown in the win dialog; the share text uses it, not live state.
+let winMoves = 0;
+
 function onWin() {
   if (!game) return;
-  const moves = game.moves();
+  const moves = (winMoves = game.moves());
   const par = level.par ?? moves;
   if (mode === "learn") {
     $("win-title").textContent = "Nice";
@@ -312,6 +315,8 @@ const CONTROLS = "button, a[href], input, select, textarea, summary, [role=butto
 window.addEventListener("keydown", (e) => {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   if (document.querySelector<HTMLElement>(".play")!.hidden) return;
+  // The win dialog owns the keyboard (Tab, Enter, Space, Escape) while it's open.
+  if (win.open) return;
   // Space and Enter on a focused control do that control's own job.
   if ((e.code === "Space" || e.code === "Enter") && e.target instanceof Element && e.target.closest(CONTROLS)) return;
   if (e.code in KEYS) {
@@ -374,8 +379,7 @@ $("next").onclick = () => {
   } else openArchive();
 };
 $("share").onclick = async () => {
-  if (!game) return;
-  const moves = game.moves();
+  const moves = winMoves;
   const text = `Afterstep #${level.id}: ${moves} moves (par ${level.par})${moves <= (level.par ?? 0) ? " ★" : ""}\nhttps://afterstep.brightloopapps.com`;
   try {
     await navigator.clipboard.writeText(text);
