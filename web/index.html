@@ -16,65 +16,67 @@
     <link href="https://fonts.googleapis.com/css2?family=Young+Serif&display=swap" rel="stylesheet" />
   </head>
   <body>
-    <header class="top">
-      <a class="brand" href="/" aria-label="Afterstep, today's puzzle">Afterstep</a>
-      <nav aria-label="Main">
-        <button data-nav="today" aria-current="page">Today</button>
-        <button data-nav="learn">How to play</button>
-        <button data-nav="archive">Past puzzles</button>
-      </nav>
-    </header>
+    <div class="screen">
+      <header class="top">
+        <a class="brand" href="/" aria-label="Afterstep, today's puzzle">Afterstep</a>
+        <nav aria-label="Main">
+          <button data-nav="today" aria-current="page">Today</button>
+          <button data-nav="learn">How to play</button>
+          <button data-nav="archive">Past puzzles</button>
+        </nav>
+      </header>
 
-    <main>
-      <section class="play" aria-labelledby="level-title">
-        <div class="level-head">
-          <h1 id="level-title">Loading</h1>
-          <p id="level-sub" class="sub"></p>
-        </div>
-        <p id="tip" class="tip" hidden></p>
-
-        <div class="board-wrap">
-          <div id="board" class="board" role="application" aria-label="Puzzle board. Arrow keys move, Space waits, Z undoes, H shows a hint."></div>
-        </div>
-
-        <div class="status-row">
-          <div class="status" aria-live="polite">
-            <span id="echo-status"></span>
-            <span id="moves"></span>
-            <span id="hint-note" class="hint-note" hidden></span>
-            <span id="board-news" class="sr-only"></span>
+      <main>
+        <section class="play" aria-labelledby="level-title">
+          <div class="level-head">
+            <h1 id="level-title">Loading</h1>
+            <p id="level-sub" class="sub"></p>
           </div>
-          <div id="solved" class="solved">
-            <p id="solved-text" class="solved-text" role="status"></p>
-          </div>
-        </div>
+          <p id="tip" class="tip" hidden></p>
 
-        <div class="controls">
-          <button id="undo" title="Undo (Z)">Undo</button>
-          <button id="wait" class="primary" title="Wait a turn (Space)">Wait</button>
-          <button id="restart" title="Start over (R)">Start over</button>
-          <button id="hint" title="Show a hint (H)">Hint</button>
-        </div>
-        <div class="below">
-          <div id="solved-actions" class="win-actions solved-actions" hidden>
-            <button id="solved-share" class="primary">Copy result</button>
-            <button id="solved-next">Next</button>
+          <div class="board-wrap">
+            <div id="board" class="board" role="application" aria-label="Puzzle board. Arrow keys move, Space waits, Z undoes, H shows a hint."></div>
           </div>
-          <div class="dpad" aria-label="Move">
-            <button data-move="0" aria-label="Up">▲</button>
-            <button data-move="2" aria-label="Left">◀</button>
-            <button data-move="1" aria-label="Down">▼</button>
-            <button data-move="3" aria-label="Right">▶</button>
-          </div>
-          <p class="keys"><span class="keys-half"><span>Arrows or WASD move</span> · <span>Space waits</span></span><span class="keys-join"> · </span><span class="keys-half"><span>Z undoes</span> · <span>R starts over</span> · <span>H hints</span></span></p>
-        </div>
-      </section>
 
-      <section id="archive" class="archive" hidden aria-labelledby="archive-title">
-        <h1 id="archive-title">Past puzzles</h1>
-        <ol id="archive-list"></ol>
-      </section>
-    </main>
+          <div class="status-row">
+            <div class="status" aria-live="polite">
+              <span id="echo-status"></span>
+              <span id="moves"></span>
+              <span id="hint-note" class="hint-note" hidden></span>
+              <span id="board-news" class="sr-only"></span>
+            </div>
+            <div id="solved" class="solved">
+              <p id="solved-text" class="solved-text" role="status"></p>
+            </div>
+          </div>
+
+          <div class="controls">
+            <button id="undo" title="Undo (Z)">Undo</button>
+            <button id="wait" class="primary" title="Wait a turn (Space)">Wait</button>
+            <button id="restart" title="Start over (R)">Start over</button>
+            <button id="hint" title="Show a hint (H)">Hint</button>
+          </div>
+          <div class="below">
+            <div id="solved-actions" class="win-actions solved-actions" hidden>
+              <button id="solved-share" class="primary">Copy result</button>
+              <button id="solved-next">Next</button>
+            </div>
+            <div class="dpad" aria-label="Move">
+              <button data-move="0" aria-label="Up">▲</button>
+              <button data-move="2" aria-label="Left">◀</button>
+              <button data-move="1" aria-label="Down">▼</button>
+              <button data-move="3" aria-label="Right">▶</button>
+            </div>
+            <p class="keys"><span class="keys-half"><span>Arrows or WASD move</span> · <span>Space waits</span></span><span class="keys-join"> · </span><span class="keys-half"><span>Z undoes</span> · <span>R starts over</span> · <span>H hints</span></span></p>
+          </div>
+        </section>
+
+        <section id="archive" class="archive" hidden aria-labelledby="archive-title">
+          <h1 id="archive-title">Past puzzles</h1>
+          <ol id="archive-list"></ol>
+        </section>
+      </main>
+    </div>
 
     <dialog id="win">
       <h2 id="win-title">Solved</h2>
