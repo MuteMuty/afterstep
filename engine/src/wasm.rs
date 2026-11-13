@@ -1,10 +1,8 @@
 //! Browser bindings. The web app keeps no game logic of its own: every move goes through here.
 
-use crate::{nudge, solver, Action, Game, Level};
+use crate::solver::{self, LIMIT};
+use crate::{nudge, Action, Game, Level};
 use wasm_bindgen::prelude::*;
-
-/// States the hint search may explore (the hardest dailies need about 400k from the start).
-const HINT_LIMIT: usize = 2_000_000;
 
 #[wasm_bindgen]
 pub struct WasmGame {
@@ -92,15 +90,16 @@ impl WasmGame {
         true
     }
 
-    /// Shortest solution from the start. Empty if none found.
+    /// Shortest solution from the start, within the same budget as the hint
+    /// search. Empty if none found.
     pub fn solve(&self) -> String {
-        solver::solve(&self.game.level, 300_000).map(|s| s.moves).unwrap_or_default()
+        solver::shortest(&self.game.level).map(|s| s.moves).unwrap_or_default()
     }
 
     /// A short sentence about the puzzle's idea (who holds which plate, whether
     /// the echo has to bump a door), read off its shortest solution from the start.
     pub fn nudge(&self) -> String {
-        nudge::nudge(&self.game.level, HINT_LIMIT).text()
+        nudge::nudge(&self.game.level, LIMIT).text()
     }
 
     /// The next move from wherever the player is now: 0-4 is the action to take
@@ -108,7 +107,7 @@ impl WasmGame {
     /// is possible from here and undoing `n` moves reaches the last winnable position.
     /// 5 means the game is already won, 6 that the search gave up.
     pub fn hint(&self) -> i32 {
-        match solver::hint(&self.game, HINT_LIMIT) {
+        match solver::hint(&self.game, LIMIT) {
             solver::Hint::Move { action, .. } => action as i32,
             solver::Hint::Stuck { undo } => -(undo as i32),
             solver::Hint::Won => 5,

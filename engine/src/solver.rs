@@ -128,6 +128,16 @@ enum Rules {
     InSync,
 }
 
+/// States the browser's searches (hint, nudge, solve) may explore. The hardest
+/// dailies need about 400k from the start; this leaves room for positions off
+/// the shortest path.
+pub const LIMIT: usize = 2_000_000;
+
+/// The shortest win from the start within [`LIMIT`], as the browser asks for it.
+pub fn shortest(level: &Level) -> Option<Solution> {
+    solve(level, LIMIT)
+}
+
 /// Solve with the echo (normal rules). `limit` caps explored states.
 pub fn solve(level: &Level, limit: usize) -> Option<Solution> {
     search(level, Rules::Normal, false, limit).ok().flatten()
@@ -476,6 +486,37 @@ mod tests {
         }
     }
 
+
+    /// The browser's solve (lab#24) shares the hint search's budget, so it
+    /// finds the shortest win on the daily in `levels/` that explores the most
+    /// states (about 375k, past the 300k it used to stop at), in par moves.
+    #[test]
+    fn shortest_solves_the_hardest_daily() {
+        let dir = format!("{}/../levels/daily", env!("CARGO_MANIFEST_DIR"));
+        let (path, explored) = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| p.extension().is_some_and(|x| x == "json"))
+            .map(|p| {
+                let n = number(&std::fs::read_to_string(&p).unwrap(), "\"explored\":");
+                (p, n)
+            })
+            .max_by_key(|&(_, n)| n)
+            .expect("dailies in levels/");
+        assert!(explored > 300_000, "the hardest daily explores {explored} states");
+        let text = std::fs::read_to_string(&path).unwrap();
+        let (rows, k) = read(path.to_str().unwrap());
+        let l = Level::parse(&rows.iter().map(String::as_str).collect::<Vec<_>>(), k).unwrap();
+        let s = shortest(&l).unwrap_or_else(|| panic!("{}: no solution within {LIMIT} states", path.display()));
+        assert_eq!(s.moves.len(), number(&text, "\"par\":"), "{}", path.display());
+        assert!(Game::verify(&l, &s.moves));
+    }
+
+    /// The whole number after `key` in a level file.
+    fn number(text: &str, key: &str) -> usize {
+        let at = &text[text.find(key).unwrap() + key.len()..];
+        at.trim_start().split(|c: char| !c.is_ascii_digit()).next().unwrap().parse().unwrap()
+    }
 
     /// Lesson 4, today's daily (2026-11-13) and the hardest dailies in
     /// `levels/`: 2026-11-21 explores the most states, 2026-11-29 has the longest par.
