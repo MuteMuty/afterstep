@@ -9,11 +9,13 @@
 // phone, today's nudge fits on one line. Lessons: all five are played in a row
 // by keyboard (desktop, dark) and by tapping the d-pad (phone, light), checking
 // "Lesson n of 5", where each win dialog leads, and that lesson 5 fits.
-// Solved state: after the win dialog closes (Escape), a solved line with Copy
-// result and Next stays below the board, keys nudge it, Tab reaches it, and
-// Undo / Start over remove it; reopening a solved puzzle from Past puzzles shows
-// it again from the saved best (an unsolved one doesn't), and on a touch phone
-// it takes the d-pad's place without pushing anything down.
+// Solved state: hidden while the win dialog is open; after it closes (Escape), a
+// solved line with Copy result and Next stays (the result in the status line's
+// place, the buttons in the keys hint's or d-pad's), keys nudge it, Tab reaches
+// it, and Undo / Start over remove it; reopening a solved puzzle from Past
+// puzzles shows it again from the saved best (an unsolved one doesn't). The page
+// is no taller and the footer no lower than during play at 1280x900, 390x844
+// and 390x844 touch, and a fast double-tap on Next can't move in the next lesson.
 //
 // Usage: node tests/playtest.mjs <baseUrl>
 // Env:   PLAYTEST_BROWSER  Chromium-based browser executable (default: Brave)
@@ -52,6 +54,8 @@ const solvedLine = (page) => page.evaluate(() => {
   return { text: t.textContent, actions: true, share: !document.querySelector("#solved-share").hidden, next: document.querySelector("#solved-next").textContent };
 });
 async function expectSolved(page, name, label, text, next, share = true) {
+  // The line shows when the dialog's close event runs, a task after it closes.
+  await page.waitForFunction(() => document.querySelector("#solved-actions")?.offsetParent, null, { timeout: 1000 }).catch(() => {});
   const got = await solvedLine(page);
   if (!got || !got.actions) return fail(`${name}: ${label}: the solved line should show with its buttons, got ${JSON.stringify(got)}`);
   if (got.text !== text) fail(`${name}: ${label}: solved line should say "${text}", says "${got.text}"`);
@@ -88,6 +92,17 @@ const stubClipboard = (page) => page.evaluate(() => {
   window.__copied = "";
   Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async (t) => { window.__copied = t; } } });
 });
+
+// Page height and footer position, to compare during play with solved.
+const pageBox = (page) => page.evaluate(() => ({
+  height: document.documentElement.scrollHeight,
+  footer: Math.round(document.querySelector(".foot").getBoundingClientRect().top + window.scrollY),
+}));
+function expectSameBox(name, label, playing, solved) {
+  if (solved.height > playing.height || solved.footer !== playing.footer)
+    fail(`${name}: ${label}: the solved line should not grow the page or move the footer (during play ${JSON.stringify(playing)}, solved ${JSON.stringify(solved)})`);
+  else console.log(`${name}: page ${solved.height}px, footer at ${solved.footer}px, same as during play`);
+}
 
 async function play(page, moves) {
   for (const m of moves) await page.keyboard.press(KEY[m]);
@@ -128,7 +143,9 @@ async function session(browser, name, viewport, colorScheme) {
   await play(page, level.solution.slice(0, half));
   await page.waitForTimeout(200);
   await page.screenshot({ path: join(out, `${name}-daily-mid.png`), fullPage: true });
-  await play(page, level.solution.slice(half));
+  await play(page, level.solution.slice(half, -1));
+  const playing = await pageBox(page);
+  await play(page, level.solution.slice(-1));
   const won = await dialogOpens(page);
   if (!won) fail(`${name}: today's puzzle (${today}) not solved by its solution`);
   else {
@@ -137,7 +154,7 @@ async function session(browser, name, viewport, colorScheme) {
   }
   await page.screenshot({ path: join(out, `${name}-daily-won.png`) });
   if (won) {
-    await winKeys(page, name);
+    await winKeys(page, name, playing);
     await reopen(page, name);
   }
   console.log(`${name}: ${sub}`);
@@ -146,13 +163,14 @@ async function session(browser, name, viewport, colorScheme) {
 
 // With the win dialog open, game keys must leave the board alone, and the
 // copied result must use the winning move count. After Escape, Z and R work.
-async function winKeys(page, name) {
+async function winKeys(page, name, playing) {
   const moves = async () => Number((await page.textContent("#moves")).match(/Moves\s*(\d+)/)?.[1]);
   const won = await moves();
   for (const k of ["KeyR", "KeyZ", "Backspace", "Period", "ArrowLeft", "KeyD"]) await page.keyboard.press(k);
   await page.waitForTimeout(200);
   if ((await moves()) !== won) fail(`${name}: keys behind the win dialog changed moves from ${won} to ${await moves()}`);
   if (!(await page.isVisible("dialog[open]"))) fail(`${name}: win dialog closed after game keys`);
+  await expectNoSolved(page, name, "while the win dialog is open");
   await page.evaluate(() => {
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async (t) => { window.__copied = t; } } });
   });
@@ -165,6 +183,7 @@ async function winKeys(page, name) {
 
   // The solved line stays: same result, the dialog's buttons, a nudge on keys.
   await expectSolved(page, name, "after Escape", `Solved in ${level.par} moves, par ${level.par}`, "Past puzzles");
+  expectSameBox(name, "after Escape", playing, await pageBox(page));
   await expectCue(page, name, "after Escape", "ArrowLeft");
   await expectCue(page, name, "after Escape", "KeyH");
   await page.screenshot({ path: join(out, `${name}-daily-solved.png`) });
@@ -356,7 +375,12 @@ async function touchControls(browser, name, viewport) {
   // d-pad's place (which can't move anything now) and pushes nothing down.
   const box = () => page.evaluate(() => {
     const r = (s) => { const e = document.querySelector(s); if (!e.offsetParent) return null; const b = e.getBoundingClientRect(); return { top: b.top + window.scrollY, bottom: b.bottom + window.scrollY }; };
-    return { solved: r("#solved-actions") && r("#solved"), controls: r(".controls"), dpad: r(".dpad"), wide: document.documentElement.scrollWidth > window.innerWidth };
+    const dpad = document.querySelector(".dpad");
+    return {
+      solved: r("#solved-actions"), controls: r(".controls"), dpad: getComputedStyle(dpad).visibility === "visible" ? r(".dpad") : null, dpadPlace: r(".dpad"),
+      status: r(".status-row"), text: r("#solved-text"), wide: document.documentElement.scrollWidth > window.innerWidth,
+      height: document.documentElement.scrollHeight, footer: Math.round(document.querySelector(".foot").getBoundingClientRect().top + window.scrollY),
+    };
   });
   await page.tap("#restart");
   // During play means just before the winning move: the status line can wrap
@@ -368,6 +392,7 @@ async function touchControls(browser, name, viewport) {
     fail(`${name}: today's puzzle not solved by its solution`);
     return page.close();
   }
+  await expectNoSolved(page, name, "while the win dialog is open");
   await page.evaluate(() => document.querySelector("#win").close());
   await expectSolved(page, name, "after the dialog closed", `Solved in ${level.par} moves, par ${level.par}`, "Past puzzles");
   const done = await box();
@@ -377,7 +402,9 @@ async function touchControls(browser, name, viewport) {
     if (done.solved.top < done.controls.bottom || done.solved.bottom > playing.dpad.bottom + 0.5)
       fail(`${name}: the solved line (${Math.round(done.solved.top)}-${Math.round(done.solved.bottom)}px) should sit within the d-pad's place (${Math.round(playing.dpad.top)}-${Math.round(playing.dpad.bottom)}px)`);
     if (done.controls.top !== playing.controls.top) fail(`${name}: the solved line moved the controls (${JSON.stringify(playing)} -> ${JSON.stringify(done)})`);
+    if (done.text.top < done.status.top - 0.5 || done.text.bottom > done.status.bottom + 0.5) fail(`${name}: the solved result should sit in the status line's place`);
     if (done.wide) fail(`${name}: the solved line scrolls sideways`);
+    expectSameBox(name, "after the dialog closed", playing, done);
     console.log(`${name}: solved line ${Math.round(done.solved.top)}-${Math.round(done.solved.bottom)}px, d-pad during play ${Math.round(playing.dpad.top)}-${Math.round(playing.dpad.bottom)}px of 844`);
   }
   await page.screenshot({ path: join(out, `${name}-daily-solved.png`) });
@@ -617,9 +644,37 @@ async function lessons(browser, name, viewport, colorScheme, touch) {
     const next = await page.textContent("#next");
     const want = n < 5 ? "Next lesson" : "Play today's puzzle";
     if (next !== want) fail(`${name}: lesson ${n} win dialog should offer "${want}", offers "${next}"`);
-    await expectSolved(page, name, `lesson ${n}`, `Solved in ${sol.length} moves`, want, false);
+    await expectNoSolved(page, name, `lesson ${n}, while the win dialog is open`);
     if (n === 5) await page.screenshot({ path: join(out, `${name}-lesson5-won.png`) });
-    if (touch) await page.tap("#next");
+    if (n === 1) {
+      // Close the dialog, then take the solved line's Next. On a phone, a fast
+      // double-tap on it must not move in lesson 2: the d-pad comes back near
+      // where Next was.
+      if (touch) await page.evaluate(() => document.querySelector("#win").close());
+      else await page.keyboard.press("Escape");
+      await expectSolved(page, name, `lesson ${n}, after the dialog closed`, `Solved in ${sol.length} moves`, want, false);
+      if (!touch) await page.click("#solved-next");
+      else {
+        await page.locator("#solved-next").scrollIntoViewIfNeeded();
+        const b = await page.locator("#solved-next").boundingBox();
+        const x = b.x + b.width / 2, y = b.y + b.height / 2;
+        // Worst case: the second tap of the double-tap lands on a d-pad button
+        // wherever the d-pad reappears (Right would make lesson 2's first move).
+        await page.touchscreen.tap(x, y);
+        const r = await page.locator('.dpad [data-move="3"]').boundingBox();
+        await page.touchscreen.tap(r.x + r.width / 2, r.y + r.height / 2);
+        await page.waitForTimeout(100);
+        const after = await page.evaluate(() => ({
+          sub: document.querySelector("#level-sub").textContent,
+          moves: Number(document.querySelector("#moves").textContent.match(/Moves\s*(\d+)/)?.[1]),
+          bumped: document.querySelector(".piece.player").classList.contains("bump"),
+        }));
+        if (after.sub !== "Lesson 2 of 5") fail(`${name}: double-tapping Next should open lesson 2, got "${after.sub}"`);
+        if (after.moves !== 0 || after.bumped) fail(`${name}: a d-pad tap right after Next made a stray move in lesson 2 (moves ${after.moves}, bumped ${after.bumped})`);
+        else console.log(`${name}: a d-pad tap right after tapping Next: no move`);
+        await page.waitForTimeout(500); // the d-pad listens again after a moment
+      }
+    } else if (touch) await page.tap("#next");
     else await page.keyboard.press("Enter"); // the dialog's focused button is Copy result (hidden) or Next
   }
   await page.waitForFunction(() => document.querySelector("#level-title").textContent.startsWith("Puzzle "), null, { timeout: 4000 })

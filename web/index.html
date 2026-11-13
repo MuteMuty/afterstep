@@ -37,10 +37,15 @@
           <div id="board" class="board" role="application" aria-label="Puzzle board. Arrow keys move, Space waits, Z undoes, H shows a hint."></div>
         </div>
 
-        <div class="status" aria-live="polite">
-          <span id="echo-status"></span>
-          <span id="moves"></span>
-          <span id="hint-note" class="hint-note" hidden></span>
+        <div class="status-row">
+          <div class="status" aria-live="polite">
+            <span id="echo-status"></span>
+            <span id="moves"></span>
+            <span id="hint-note" class="hint-note" hidden></span>
+          </div>
+          <div id="solved" class="solved">
+            <p id="solved-text" class="solved-text" role="status"></p>
+          </div>
         </div>
 
         <div class="controls">
@@ -49,20 +54,19 @@
           <button id="restart" title="Start over (R)">Start over</button>
           <button id="hint" title="Show a hint (H)">Hint</button>
         </div>
-        <div id="solved" class="solved">
-          <p id="solved-text" class="solved-text" role="status"></p>
-          <div id="solved-actions" class="win-actions" hidden>
+        <div class="below">
+          <div id="solved-actions" class="win-actions solved-actions" hidden>
             <button id="solved-share" class="primary">Copy result</button>
             <button id="solved-next">Next</button>
           </div>
+          <div class="dpad" aria-label="Move">
+            <button data-move="0" aria-label="Up">▲</button>
+            <button data-move="2" aria-label="Left">◀</button>
+            <button data-move="1" aria-label="Down">▼</button>
+            <button data-move="3" aria-label="Right">▶</button>
+          </div>
+          <p class="keys">Arrows or WASD move · Space waits · Z undoes · R starts over · H hints</p>
         </div>
-        <div class="dpad" aria-label="Move">
-          <button data-move="0" aria-label="Up">▲</button>
-          <button data-move="2" aria-label="Left">◀</button>
-          <button data-move="1" aria-label="Down">▼</button>
-          <button data-move="3" aria-label="Right">▶</button>
-        </div>
-        <p class="keys">Arrows or WASD move · Space waits · Z undoes · R starts over · H hints</p>
       </section>
 
       <section id="archive" class="archive" hidden aria-labelledby="archive-title">

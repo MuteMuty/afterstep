@@ -298,12 +298,23 @@ function nextLabel(): string {
   return tutorialStep + 1 < index.tutorial.length ? "Next lesson" : "Play today's puzzle";
 }
 
-/** The solved line below the board, with the win dialog's Copy result and Next.
- *  While it shows, the d-pad (which can't move anything) gives it its place. */
+// The d-pad comes back where the solved line's Next was, so a fast double-tap
+// on Next could land its second tap on a d-pad button: ignore d-pad presses
+// for a moment after it reappears.
+const DPAD_QUIET_MS = 400;
+let dpadQuietUntil = 0;
+let solvedShown = false;
+
+/** The solved line, once the win dialog has closed: the result in the status
+ *  line's place and the dialog's Copy result and Next in the place of the keys
+ *  hint (or the d-pad, which can't move anything now), so the page never grows. */
 function renderSolved() {
-  playEl.classList.toggle("is-solved", !!solved);
-  solvedActions.hidden = !solved;
-  const text = solved ? `Solved in ${solved.moves} moves${hintText(solved.hints)}${level.par ? `, par ${level.par}` : ""}` : "";
+  const shown = !!solved && !win.open;
+  if (solvedShown && !shown) dpadQuietUntil = performance.now() + DPAD_QUIET_MS;
+  solvedShown = shown;
+  playEl.classList.toggle("is-solved", shown);
+  solvedActions.hidden = !shown;
+  const text = shown && solved ? `Solved in ${solved.moves} moves${hintText(solved.hints)}${level.par ? `, par ${level.par}` : ""}` : "";
   if (solvedText.textContent !== text) solvedText.textContent = text;
   $("solved-share").hidden = mode === "learn";
   $("solved-next").textContent = nextLabel();
@@ -337,8 +348,9 @@ function onWin() {
     $("share").hidden = false;
   }
   $("next").textContent = nextLabel();
-  renderSolved();
+  // The solved line waits behind the dialog and shows once it closes.
   win.showModal();
+  renderSolved();
 }
 
 function loadLevel(l: Level) {
@@ -485,7 +497,7 @@ function control(b: HTMLElement, run: () => void) {
   };
 }
 document.querySelectorAll<HTMLButtonElement>("[data-move]").forEach((b) => {
-  control(b, () => act(Number(b.dataset.move)));
+  control(b, () => { if (performance.now() >= dpadQuietUntil) act(Number(b.dataset.move)); });
 });
 control($("wait"), () => act(WAIT));
 control($("undo"), undo);
@@ -528,14 +540,9 @@ $("next").onclick = next;
 $("solved-next").onclick = next;
 $("share").onclick = () => copyResult($("share"));
 $("solved-share").onclick = () => copyResult($("solved-share"));
-// The page behind the open dialog is inert, so screen readers miss the solved
-// line appearing. Say it again once the dialog closes (unless Next moved on).
-win.addEventListener("close", () => {
-  const g = game, text = solvedText.textContent;
-  if (!solved || !text) return;
-  solvedText.textContent = "";
-  requestAnimationFrame(() => { if (game === g && solved) solvedText.textContent = text; });
-});
+// The solved line appears once the dialog closes (unless Next moved on), when the
+// page is no longer inert, so its status region announces it then.
+win.addEventListener("close", renderSolved);
 
 // ---------- boot ----------
 (async () => {

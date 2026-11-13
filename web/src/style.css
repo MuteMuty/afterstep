@@ -250,12 +250,13 @@ main { flex: 1; width: 100%; max-width: 560px; margin: 0 auto; padding: 0 1rem 2
 @keyframes hint-pulse { 50% { transform: scale(0.88); opacity: 0.55; } }
 
 /* ---------- status & controls ---------- */
+/* The status line and the solved line share one row (see "solved line"). */
+.status-row { display: grid; max-width: 420px; margin: 0.9rem auto 0; }
+.status-row > * { grid-area: 1 / 1; }
 .status {
   display: flex;
   justify-content: space-between;
   gap: 1rem;
-  max-width: 420px;
-  margin: 0.9rem auto 0;
   color: var(--ink-dim);
   font-variant-numeric: tabular-nums;
 }
@@ -300,17 +301,20 @@ button.hinted { border-color: var(--sun); box-shadow: 0 0 0 3px var(--sun-glow);
 }
 
 /* ---------- solved line ---------- */
-/* Once solved, the result and the win dialog's buttons stay below the controls.
-   The d-pad can't move anything then, so the line takes its place and nothing
-   above it moves. Keys on a solved board nudge it. */
-.solved { text-align: center; font-variant-numeric: tabular-nums; }
-.solved-text { margin: 0; }
-.play.is-solved .solved { margin-top: 0.9rem; }
-.play.is-solved .dpad { display: none; }
+/* Once solved (and the win dialog closed), the result takes the status line's
+   place, which it repeats, and the win dialog's buttons a row below the
+   controls, in the place of the keys hint or the d-pad (neither can move
+   anything now). Both keep their space, so nothing moves and the page never
+   grows. Keys on a solved board nudge the result. */
+.solved { align-self: center; text-align: center; font-variant-numeric: tabular-nums; }
+.solved-text { margin: 0; text-wrap: balance; }
+.play.is-solved .status { visibility: hidden; }
+.below { position: relative; display: flow-root; }
+.below .solved-actions { position: absolute; top: 0.9rem; left: 0; right: 0; margin: 0; }
+.solved-actions[hidden] { display: none; }
+.play.is-solved .dpad, .play.is-solved .keys { visibility: hidden; }
 /* Wait can't do anything now either, so Copy result is the one filled button. */
 .play.is-solved #wait { background: transparent; color: inherit; border-color: var(--line); }
-.solved .win-actions { margin-top: 0.6rem; }
-.solved .win-actions[hidden] { display: none; }
 .solved.bump { animation: shake 0.22s ease; }
 .solved.bump .solved-text { animation: solved-flash 0.6s ease; }
 @keyframes solved-flash { 30% { color: var(--sun); } }
