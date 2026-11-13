@@ -82,10 +82,18 @@
         <button id="share" class="primary">Copy result</button>
         <button id="next">Next</button>
       </div>
+      <!-- Likes (lab#17): hidden until the lab's like counts load. -->
+      <p id="win-like" class="win-like" hidden>
+        <span id="win-like-ask">Enjoyed today's puzzle?</span>
+        <button id="like-win" class="like" type="button" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 20s-7.5-4.6-7.5-10.1A4.2 4.2 0 0 1 12 7.4a4.2 4.2 0 0 1 7.5 2.5C19.5 15.4 12 20 12 20z"/></svg><span class="like-n" aria-hidden="true"></span></button>
+      </p>
+      <p class="like-note win-like-note" aria-hidden="true" hidden></p>
     </dialog>
 
     <footer class="foot">
-      <p>A new puzzle every day. Made by <a href="https://github.com/MuteMuty">Erik Pahor</a> at <a href="https://lab.brightloopapps.com">BrightLoop Lab</a>. <a href="https://github.com/MuteMuty/afterstep">Source</a></p>
+      <p><button id="like-foot" class="like" type="button" aria-pressed="false" hidden><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 20s-7.5-4.6-7.5-10.1A4.2 4.2 0 0 1 12 7.4a4.2 4.2 0 0 1 7.5 2.5C19.5 15.4 12 20 12 20z"/></svg><span class="like-n" aria-hidden="true"></span></button> A new puzzle every day. Made by <a href="https://github.com/MuteMuty">Erik Pahor</a> at <a href="https://lab.brightloopapps.com">BrightLoop Lab</a>. <a href="https://github.com/MuteMuty/afterstep">Source</a></p>
+      <p class="like-note foot-like-note" aria-hidden="true" hidden></p>
+      <p id="like-live" class="sr-only" role="status"></p>
     </footer>
 
     <script type="module" src="/src/main.ts"></script>

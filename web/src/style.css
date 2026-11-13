@@ -355,8 +355,63 @@ dialog::backdrop { background: rgba(5, 15, 35, 0.6); }
 dialog h2 { font-family: var(--font-display); font-weight: 400; font-size: 2rem; margin: 0 0 0.25rem; }
 .win-actions { display: flex; justify-content: center; gap: 0.5rem; margin-top: 1rem; }
 
-.foot { text-align: center; color: var(--ink-dim); font-size: 0.85rem; padding: 1rem 1rem 1.5rem; }
+.foot { position: relative; text-align: center; color: var(--ink-dim); font-size: 0.85rem; padding: 1rem 1rem 1.5rem; }
 .foot p { max-width: 60ch; margin: 0 auto; }
+
+/* ---------- likes ---------- */
+/* A heart and the live count. The footer's is quiet and keeps the footer's line
+   height (its padding is a bigger target, not a taller line), so showing it
+   never moves the page; the win dialog's is a pill like its other buttons. */
+.like {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3em;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.like[hidden] { display: none; }
+.like svg { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-width: 2; stroke-linejoin: round; }
+.like[aria-pressed="true"] svg { fill: var(--sun); stroke: var(--sun); }
+.like[aria-busy="true"] { cursor: progress; }
+.foot .like {
+  vertical-align: top;
+  border-color: transparent;
+  padding: 0.45rem 0.6rem;
+  margin: calc(-0.45rem - 1.5px) 0.1rem calc(-0.45rem - 1.5px) calc(-0.6rem - 1.5px);
+  color: var(--ink);
+}
+.foot .like:hover { border-color: var(--line); }
+.win-like { margin: 1.1rem 0 0; color: var(--ink-dim); display: flex; align-items: center; justify-content: center; gap: 0.6rem; flex-wrap: wrap; }
+.win-like[hidden] { display: none; }
+.win-like .like { color: var(--ink); padding: 0.4rem 0.9rem 0.4rem 0.75rem; }
+.like[aria-pressed="true"]:not(:hover) { border-color: color-mix(in srgb, var(--sun) 55%, transparent); }
+.foot .like[aria-pressed="true"]:not(:hover) { border-color: transparent; }
+/* A like that didn't go through says so by its button: under it in the dialog,
+   and laid over the footer line for a few seconds there, so nothing moves and
+   the game's controls above it stay uncovered. */
+.like-note { margin: 0.6rem auto 0; max-width: 32ch; color: var(--ink); font-size: 0.9rem; text-wrap: balance; }
+.foot .like-note {
+  position: absolute;
+  left: 50%;
+  top: 0.55rem;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: min(32ch, calc(100vw - 2rem));
+  margin: 0;
+  padding: 0.45rem 0.8rem;
+  background: var(--paper);
+  border: 1.5px solid var(--line);
+  border-radius: var(--radius);
+  font-size: 0.85rem;
+  pointer-events: none;
+}
+.like-note[hidden] { display: none; }
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+@media (prefers-reduced-motion: no-preference) {
+  .like.pop svg { animation: like-pop 0.32s cubic-bezier(0.22, 1, 0.36, 1); }
+  @keyframes like-pop { 40% { transform: scale(1.3); } }
+}
 
 @media (prefers-reduced-motion: reduce) {
   .piece, .cell.door::after, .cell.plate::after { transition: none; }

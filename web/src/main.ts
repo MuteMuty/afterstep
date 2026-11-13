@@ -1,5 +1,6 @@
 import "./style.css";
 import init, { WasmGame } from "./wasm/afterstep_engine.js";
+import { createLikes, likeLabel, type LikeState } from "./likes";
 
 type Level = {
   id: number | string;
@@ -358,6 +359,7 @@ function onWin() {
     $("share").hidden = false;
   }
   $("next").textContent = nextLabel();
+  showWinLike();
   // The solved line waits behind the dialog and shows once it closes.
   win.showModal();
   renderSolved();
@@ -558,10 +560,77 @@ $("solved-share").onclick = () => copyResult($("solved-share"));
 // page is no longer inert, so its status region announces it then.
 win.addEventListener("close", renderSolved);
 
+// ---------- likes (lab#17) ----------
+// A heart with the live count from the lab hub: a quiet one at the start of the
+// footer line, and one in a daily's win dialog. Both stay hidden until the counts
+// load, and the game never waits for them. See likes.ts.
+const likeButtons = [$<HTMLButtonElement>("like-foot"), $<HTMLButtonElement>("like-win")];
+const winLike = $("win-like");
+const likeLive = $("like-live");
+let likeNoteTimer = 0;
+let likeNoteFor: HTMLElement | null = null;
+let storage: Storage | null = null;
+try { storage = window.localStorage; } catch {}
+
+const likes = createLikes({
+  fetch: (...a) => fetch(...a),
+  storage,
+  api: "https://lab.brightloopapps.com",
+  project: "afterstep",
+  onChange: renderLikes,
+});
+
+function renderLikes(s: LikeState) {
+  for (const b of likeButtons) {
+    b.hidden = !s.ready;
+    b.setAttribute("aria-pressed", String(s.liked));
+    b.setAttribute("aria-label", likeLabel(s.count));
+    if (s.busy) b.setAttribute("aria-busy", "true");
+    else b.removeAttribute("aria-busy");
+    b.querySelector(".like-n")!.textContent = String(s.count);
+  }
+  showWinLike();
+  // A note shows by the button that was pressed, and is read out politely.
+  const notes = document.querySelectorAll<HTMLElement>(".like-note");
+  clearTimeout(likeNoteTimer);
+  notes.forEach((n) => {
+    n.hidden = !s.note || n !== likeNoteFor;
+    n.textContent = n.hidden ? "" : s.note;
+  });
+  likeLive.textContent = s.note;
+  if (s.note) likeNoteTimer = window.setTimeout(() => notes.forEach((n) => (n.hidden = true)), 6000);
+}
+
+/** The win dialog asks on a daily, once the counts are in. */
+function showWinLike() {
+  winLike.hidden = !likes.state.ready || mode !== "daily";
+  $("win-like-ask").textContent = isToday ? "Enjoyed today's puzzle?" : "Enjoyed this puzzle?";
+}
+
+function pop(b: HTMLElement) {
+  b.classList.remove("pop");
+  void b.offsetWidth;
+  b.classList.add("pop");
+}
+likeButtons.forEach((b, i) => {
+  const note = document.querySelectorAll<HTMLElement>(i === 0 ? ".foot-like-note" : ".win-like-note")[0];
+  const press = () => {
+    likeNoteFor = note;
+    if (!likes.state.liked) pop(b);
+    likes.toggle();
+  };
+  // The footer's heart is pressed during play: after a mouse or touch press, focus
+  // goes back to the board like the game controls'. The dialog's keeps its focus.
+  if (i === 0) control(b, press);
+  else b.onclick = press;
+});
+
 // ---------- boot ----------
 (async () => {
   board.tabIndex = 0;
   [index] = await Promise.all([fetch("/levels/index.json").then((r) => r.json()), init()]);
   if (save.learned) openDaily();
   else openLearn(0);
+  // Counts load after the first puzzle is on screen; nothing waits for them.
+  likes.load();
 })();
