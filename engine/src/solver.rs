@@ -87,9 +87,11 @@ impl State {
         self.echo != NONE && self.oldest() != Action::Wait && next.echo == self.echo
     }
 
-    /// The state after taking `a`, or `None` if the move is blocked.
+    /// The state after taking `a`, or `None` if the move is blocked. With
+    /// `rules` [`Rules::InSync`] the echo walks through closed doors.
     #[inline]
-    fn next(self, level: &Level, a: Action, with_echo: bool) -> Option<State> {
+    fn next(self, level: &Level, a: Action, rules: Rules) -> Option<State> {
+        let with_echo = rules != Rules::NoEcho;
         let k = level.delay as u8;
         let s = self;
         let echo = if s.echo == NONE { None } else { Some(s.echo as usize) };
@@ -105,19 +107,35 @@ impl State {
         };
         // The echo only replays once it exists.
         let echo_action = if echo.is_some() { echo_action } else { None };
-        let (p, e) = level.step(s.player as usize, echo, a, spawn, echo_action)?;
+        let (p, mut e) = level.step(s.player as usize, echo, a, spawn, echo_action)?;
+        if rules == Rules::InSync {
+            // In step, the echo always stands where you stood, so it can always go where you went.
+            if let (Some(old), Some(ea)) = (echo, echo_action) {
+                e = level.neighbor(old, ea);
+            }
+        }
         Some(State { player: p as u8, echo: e.map(|v| v as u8).unwrap_or(NONE), len: nlen, queue: nqueue })
     }
 }
 
+/// Which rules a search plays by.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Rules {
+    Normal,
+    /// The echo never appears.
+    NoEcho,
+    /// The echo walks through closed doors, so it never falls out of step.
+    InSync,
+}
+
 /// Solve with the echo (normal rules). `limit` caps explored states.
 pub fn solve(level: &Level, limit: usize) -> Option<Solution> {
-    search(level, true, false, limit).ok().flatten()
+    search(level, Rules::Normal, false, limit).ok().flatten()
 }
 
 /// Solve as if the echo never appears: used to prove a level actually needs the echo.
 pub fn solve_without_echo(level: &Level, limit: usize) -> Option<Solution> {
-    search(level, false, false, limit).ok().flatten()
+    search(level, Rules::NoEcho, false, limit).ok().flatten()
 }
 
 /// The search explored `limit` states without settling the question.
@@ -125,13 +143,23 @@ pub fn solve_without_echo(level: &Level, limit: usize) -> Option<Solution> {
 pub struct OutOfBudget;
 
 /// Solve without ever letting the echo bump into anything (it never falls out
-/// of step): used to prove a level needs the echo to bump on purpose.
+/// of step): used to prove every win of a level makes the echo bump.
 /// `Ok(None)` means no such win exists at all.
 pub fn solve_in_step(level: &Level, limit: usize) -> Result<Option<Solution>, OutOfBudget> {
-    search(level, true, true, limit)
+    search(level, Rules::Normal, true, limit)
 }
 
-fn search(level: &Level, with_echo: bool, in_step: bool, limit: usize) -> Result<Option<Solution>, OutOfBudget> {
+/// Solve as if closed doors never stopped the echo, so it always walks exactly
+/// where you walked. `Ok(None)` proves every real win needs a door to stop the
+/// echo on purpose: an echo that just kept following you can't win it. That is
+/// more than every win bumping the echo (it can bump by accident, on a step
+/// after you no longer need it), and implies [`solve_in_step`] finds no win too:
+/// a win without any bump is also a win here.
+pub fn solve_in_sync(level: &Level, limit: usize) -> Result<Option<Solution>, OutOfBudget> {
+    search(level, Rules::InSync, false, limit)
+}
+
+fn search(level: &Level, rules: Rules, in_step: bool, limit: usize) -> Result<Option<Solution>, OutOfBudget> {
     let start = State { player: level.start as u8, echo: NONE, len: 0, queue: 0 };
     let mut parent: HashMap<State, (State, Action), Fast> = HashMap::with_capacity_and_hasher(1 << 14, Fast::default());
     let mut q = VecDeque::new();
@@ -154,7 +182,7 @@ fn search(level: &Level, with_echo: bool, in_step: bool, limit: usize) -> Result
             return Err(OutOfBudget);
         }
         for a in Action::ALL {
-            if let Some(ns) = s.next(level, a, with_echo) {
+            if let Some(ns) = s.next(level, a, rules) {
                 if ns == start || (in_step && s.echo_bumps(ns)) {
                     continue;
                 }
@@ -199,7 +227,7 @@ fn search_from(level: &Level, root: State, dead: &mut HashSet<State, Fast>, budg
     q.push_back((root, NONE, 0));
     while let Some((s, first, depth)) = q.pop_front() {
         for a in Action::ALL {
-            let Some(ns) = s.next(level, a, true) else { continue };
+            let Some(ns) = s.next(level, a, Rules::Normal) else { continue };
             let f = if first == NONE { a as u8 } else { first };
             if ns.player as usize == level.exit {
                 return Outcome::Win { first: Action::from_u8(f).unwrap(), len: depth as usize + 1 };
@@ -288,6 +316,64 @@ mod tests {
         assert!(g.won() && g.echo_blocked.iter().all(|b| !b));
         assert!(matches!(solve_in_step(&l, 3), Err(OutOfBudget)));
         assert_eq!(solve_in_step(&Level::parse(&["S#E"], 2).unwrap(), 100_000).map(|s| s.is_some()), Ok(false));
+    }
+
+    #[test]
+    fn in_sync_solve_lets_the_echo_walk_through_closed_doors() {
+        // Lesson 2 is won with the echo in step, so the in-sync rules win it just as fast.
+        let l = Level::parse(&["S.A", "#.#", "#a#", "#E#"], 2).unwrap();
+        let s = solve_in_sync(&l, 100_000).unwrap().expect("an in-sync win");
+        assert_eq!(s.moves.len(), solve(&l, 100_000).unwrap().moves.len());
+        assert!(matches!(solve_in_sync(&l, 3), Err(OutOfBudget)));
+        // Here every win bumps the echo into door a, but only by accident: it
+        // bumps on the very step you go through b, so an echo that never fell
+        // out of step would have held B for you just the same.
+        let accident = Level::parse(&["S.A", "#B#", "#a#", "#.#", "#b#", "#E#"], 2).unwrap();
+        assert!(matches!(solve_in_step(&accident, 100_000), Ok(None)));
+        assert!(solve_in_sync(&accident, 100_000).unwrap().is_some());
+        // One more step between B and b: an echo in step has walked off B by
+        // the time you get there, so it has to get stuck on B on purpose.
+        let purpose = Level::parse(&["S.A", "#B#", "#a#", "#.#", "#.#", "#bE"], 2).unwrap();
+        assert!(solve(&purpose, 100_000).is_some());
+        assert!(matches!(solve_in_sync(&purpose, 100_000), Ok(None)));
+    }
+
+    /// Lesson 5 teaches the bump: it can't be won without the echo, every win
+    /// needs the echo out of step, and the shortest win gets it there by
+    /// bumping a closed door while it stands on a plate.
+    #[test]
+    fn lesson_5_needs_the_echo_to_bump_a_door_on_purpose() {
+        let (rows, k) = read(&format!("{}/../levels/tutorial/5.json", env!("CARGO_MANIFEST_DIR")));
+        let l = Level::parse(&rows.iter().map(String::as_str).collect::<Vec<_>>(), k).unwrap();
+        let sol = solve(&l, 3_000_000).expect("solvable").moves;
+        assert!(solve_without_echo(&l, 3_000_000).is_none(), "needs the echo");
+        assert!(matches!(solve_in_step(&l, 3_000_000), Ok(None)), "a win where the echo never bumps exists");
+        assert!(matches!(solve_in_sync(&l, 3_000_000), Ok(None)), "a win with the echo in step exists");
+        // Replay: the echo's first bump is into a closed door, and while it is
+        // out of step it holds a plate for you to go through that plate's door.
+        let mut g = Game::new(l.clone());
+        let (mut first_bump, mut held_out_of_step) = (None, false);
+        for c in sol.chars() {
+            let (p, e) = (g.player, g.echo);
+            let echo_action = e.map(|_| g.history[g.history.len() - k]);
+            assert!(g.try_step(Action::from_char(c).unwrap()));
+            if first_bump.is_none() && *g.echo_blocked.last().unwrap() {
+                first_bump = l.neighbor(e.unwrap(), echo_action.unwrap()).map(|t| l.tiles[t]);
+            }
+            if let (crate::Tile::Door(d), Some(e)) = (l.tiles[g.player], e) {
+                let synced = g.history.len() > k && Some(e) == replayed(&l, &g.history[..g.history.len() - 1 - k]);
+                held_out_of_step |= g.player != p && first_bump.is_some() && !synced && l.tiles[e] == crate::Tile::Plate(d);
+            }
+        }
+        assert!(g.won());
+        assert!(matches!(first_bump, Some(crate::Tile::Door(_))), "first bump into {first_bump:?}");
+        assert!(held_out_of_step, "{sol}: the echo never holds a plate while out of step");
+    }
+
+    /// Where you stood after `moves` from the start.
+    fn replayed(l: &Level, moves: &[Action]) -> Option<usize> {
+        let mut g = Game::new(l.clone());
+        moves.iter().all(|&a| g.try_step(a)).then_some(g.player)
     }
 
     #[test]
@@ -402,8 +488,11 @@ mod tests {
     }
 
     fn daily(date: &str) -> (Vec<String>, usize) {
-        let path = format!("{}/../levels/daily/{date}.json", env!("CARGO_MANIFEST_DIR"));
-        let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
+        read(&format!("{}/../levels/daily/{date}.json", env!("CARGO_MANIFEST_DIR")))
+    }
+
+    fn read(path: &str) -> (Vec<String>, usize) {
+        let text = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{path}: {e}"));
         // Tiny reader for the two fields we need, so tests don't need serde.
         let after = |key: &str| &text[text.find(key).unwrap() + key.len()..];
         let delay: usize = after("\"delay\":").trim_start().split(|c: char| !c.is_ascii_digit()).next().unwrap().parse().unwrap();

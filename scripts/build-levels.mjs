@@ -8,7 +8,7 @@ rmSync(out, { recursive: true, force: true });
 mkdirSync(join(out, "daily"), { recursive: true });
 mkdirSync(join(out, "tutorial"), { recursive: true });
 
-const strip = ({ solution, explored, needsEcho, ...rest }) => rest;
+const strip = ({ solution, explored, needsEcho, needsBump, ...rest }) => rest;
 const daily = [];
 for (const f of readdirSync(join(root, "levels/daily")).filter((f) => f.endsWith(".json")).sort()) {
   const lvl = JSON.parse(readFileSync(join(root, "levels/daily", f), "utf8"));
