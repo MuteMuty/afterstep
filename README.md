@@ -15,6 +15,8 @@ A few moves after you start, an **echo** of you appears and repeats everything y
 
 The solver searches states of (you, your echo, your last *k* moves): the echo's future is fully determined by those moves, so nothing else needs remembering. Hard puzzles explore 250k–400k states and still generate in about a second.
 
+Headings use **Young Serif** by Bastien Sozeau ([noirblancrouge/YoungSerif](https://github.com/noirblancrouge/YoungSerif), listed in [google/fonts `ofl/youngserif`](https://github.com/google/fonts/tree/main/ofl/youngserif)), licensed under the SIL Open Font License 1.1 ([`web/public/fonts/OFL.txt`](web/public/fonts/OFL.txt)). Afterstep serves it itself, so the page asks no other site for fonts. `web/public/fonts/YoungSerif-latin.woff2` (18,520 bytes, version 1.0) is the Latin subset Google Fonts serves, downloaded on 2026-11-13 from `https://fonts.gstatic.com/s/youngserif/v2/3qTpojO2nS2VtkB3KtkQZ1t93kY6ah7E.woff2` (SHA-256 `a46a84bfaa83dea2fa2d034dbf9b8f119a0872d78d28aa2cfe06ced9c1d2ef9e`); `OFL.txt` is from `https://raw.githubusercontent.com/google/fonts/main/ofl/youngserif/OFL.txt`.
+
 ## Run it
 
 ```sh
