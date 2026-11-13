@@ -4,8 +4,10 @@
 // on desktop and tapping the controls on a touch phone. Hint check: the first
 // hint on each puzzle is a nudge about its idea (no move marked, not counted);
 // follows hints through lessons 1-3, gets stuck in lesson 4 and takes the
-// offered undo, follows hints through lesson 5 (the echo bump), and checks the
-// hint count on today's puzzle (and its absence on a past one). On the touch
+// offered undo by mouse and then, after Hint by keyboard, with U (which does
+// nothing while no offer shows; the offer fits one line at 390px), follows
+// hints through lesson 5 (the echo bump), and checks the hint count on
+// today's puzzle (and its absence on a past one). On the touch
 // phone, today's nudge fits on one line. Lessons: all five are played in a row
 // by keyboard (desktop, dark) and by tapping the d-pad (phone, light), checking
 // "Lesson n of 5", where each win dialog leads, and that lesson 5 fits.
@@ -479,13 +481,49 @@ async function hintFlow(browser, name, viewport) {
   // Lesson 4: after RDDD..UD.. the echo can no longer hold plate B for you.
   // Saying so comes before the nudge, which waits for a winnable position.
   await play(page, "RDDD..UD..");
+  // U takes the offer only while it shows: here it does nothing yet.
+  await page.keyboard.press("KeyU");
+  if ((await moves()) !== 10) fail(`${name}: U with no undo offer showing should do nothing, moves ${await moves()}`);
   await page.keyboard.press("KeyH");
-  if ((await noteText()) !== "You can't win from here. Undo 3 moves?") fail(`${name}: lost position should offer "Undo 3 moves?", got "${await noteText()}"`);
+  const offer = "Can't win from here. Undo 3 moves? Press U";
+  if ((await noteText()) !== offer) fail(`${name}: lost position should offer "${offer}", got "${await noteText()}"`);
   if (await page.isVisible("#board .hint-mark")) fail(`${name}: a lost position should not mark a move`);
   await page.screenshot({ path: join(out, `${name}-stuck.png`) });
+  // The mouse takes it as before: click the link, back to move 7, board focused.
   await page.click("#hint-note button");
   if ((await moves()) !== 7) fail(`${name}: the offered undo should go back to move 7, at ${await moves()}`);
   if ((await page.evaluate(() => document.activeElement.id)) !== "board") fail(`${name}: after the offered undo the board should have focus`);
+  await page.keyboard.press("KeyU");
+  if ((await moves()) !== 7) fail(`${name}: U after the offer was taken should do nothing, moves ${await moves()}`);
+
+  // The keyboard takes it too: lose again, Tab to Hint, press it with Enter, then U.
+  await play(page, "D..");
+  for (let i = 0; i < 4; i++) await page.keyboard.press("Tab");
+  if ((await page.evaluate(() => document.activeElement.id)) !== "hint") fail(`${name}: four Tabs from the board should reach Hint`);
+  await page.keyboard.press("Enter");
+  if ((await noteText()) !== offer) fail(`${name}: Hint by keyboard should offer "${offer}", got "${await noteText()}"`);
+  // The offer stays on one line on a 390px-wide screen with a keyboard.
+  await page.setViewportSize({ width: 390, height: 844 });
+  const offerFit = await page.evaluate(() => {
+    const n = document.querySelector("#hint-note"), s = document.querySelector(".status");
+    const r = n.getBoundingClientRect(), t = document.createRange();
+    t.selectNodeContents(n);
+    const text = t.getBoundingClientRect();
+    return { lines: text.height < 2 * parseFloat(getComputedStyle(n).fontSize) ? 1 : 2, inside: text.left >= r.left - 0.5 && text.right <= r.right + 0.5, page: document.documentElement.scrollWidth <= window.innerWidth, statusW: s.clientWidth, textW: Math.round(text.width) };
+  });
+  // With room to spare for a two-digit count and wider fonts.
+  if (offerFit.lines !== 1 || !offerFit.inside || !offerFit.page || offerFit.textW > offerFit.statusW - 24)
+    fail(`${name}: the undo offer at 390px should fit on one line with 24px to spare (${offerFit.lines} lines, ${offerFit.textW}px of ${offerFit.statusW}px)`);
+  else console.log(`${name}: the undo offer at 390px: ${offerFit.textW}px of ${offerFit.statusW}px`);
+  await page.screenshot({ path: join(out, `${name}-stuck-390.png`) });
+  await page.setViewportSize(viewport);
+  await page.keyboard.press("KeyU");
+  if ((await moves()) !== 7) fail(`${name}: U should take the offered undo back to move 7, at ${await moves()}`);
+  if (await page.isVisible("#hint-note")) fail(`${name}: the offer should go once U takes it`);
+  if ((await page.evaluate(() => document.activeElement.id)) !== "board") fail(`${name}: after U takes the offer the board should have focus`);
+  await page.keyboard.press("KeyU");
+  if ((await moves()) !== 7) fail(`${name}: U a second time should do nothing, moves ${await moves()}`);
+  // The position after the undo can be won: the nudge, then hints solve it.
   await expectNudge("lesson 4 after the undo", "Let your echo hold plate B for you.");
   await page.screenshot({ path: join(out, `${name}-nudge.png`) });
   if (!(await followHints("lesson 4"))) {

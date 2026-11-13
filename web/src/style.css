@@ -297,7 +297,7 @@ button.hinted { border-color: var(--sun); box-shadow: 0 0 0 3px var(--sun-glow);
 .keys { text-align: center; color: var(--ink-dim); font-size: 0.85rem; margin-top: 1rem; text-wrap: balance; }
 @media (pointer: coarse) {
   .dpad { display: grid; }
-  .keys { display: none; }
+  .keys, .hint-key { display: none; }
 }
 
 /* ---------- solved line ---------- */

@@ -202,9 +202,12 @@ const MOVE_WORDS = ["move up", "move down", "move left", "move right", "wait a t
 let hintShownFor: string | null = null;
 // The first hint on a puzzle is a nudge about its idea, not a move. It never counts.
 let nudged = false;
+// Takes the "Undo N moves?" offer while it shows (its link, or U); null otherwise.
+let takeUndoOffer: (() => void) | null = null;
 
 function clearHint() {
   hintShownFor = null;
+  takeUndoOffer = null;
   els.hint.hidden = true;
   hintNote.hidden = true;
   hintNote.replaceChildren();
@@ -247,12 +250,19 @@ function showHint() {
     const undo = document.createElement("button");
     undo.className = "link";
     undo.textContent = `Undo ${n} ${n === 1 ? "move" : "moves"}?`;
-    undo.onclick = () => {
+    undo.setAttribute("aria-keyshortcuts", "U");
+    const take = () => {
       for (let i = 0; i < n; i++) g.undo();
       render();
       board.focus({ preventScroll: true });
     };
-    note("You can't win from here. ", undo);
+    undo.onclick = take;
+    // Named for keyboards only: touch screens hide it, like the keys hint.
+    const key = document.createElement("span");
+    key.className = "hint-key";
+    key.textContent = " Press U";
+    note("Can't win from here. ", undo, key);
+    takeUndoOffer = take;
   } else if (h === 6) {
     note("No hint found from here.");
   }
@@ -455,6 +465,10 @@ window.addEventListener("keydown", (e) => {
     restart();
   } else if (e.code === "KeyH") {
     showHint();
+  } else if (e.code === "KeyU" && takeUndoOffer) {
+    // U takes Hint's undo offer, and does nothing while none shows.
+    e.preventDefault();
+    takeUndoOffer();
   }
 });
 
