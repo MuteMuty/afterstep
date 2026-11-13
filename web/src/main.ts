@@ -1,6 +1,7 @@
 import "./style.css";
 import init, { WasmGame } from "./wasm/afterstep_engine.js";
 import { createLikes, likeLabel, type LikeState } from "./likes";
+import { parseRoute, routeHash, routeTitle, shareUrl, type Route } from "./route";
 
 type Level = {
   id: number | string;
@@ -389,13 +390,19 @@ function loadLevel(l: Level) {
   board.focus({ preventScroll: true });
 }
 
+// Bumps on every screen change, so a puzzle that loads after the visitor has
+// moved on (Back, Forward, another click) is dropped.
+let screenToken = 0;
+
 async function openDaily(date?: string) {
-  mode = "daily";
+  const token = ++screenToken;
   if (!save.learned) { save.learned = true; persist(); }
   const today = localDate();
   const avail = index.daily.filter((d) => d.date <= today);
   const entry = (date && avail.find((d) => d.date === date)) || avail[avail.length - 1] || index.daily[0];
   const l: Level = await fetch(`/levels/daily/${entry.date}.json`).then((r) => r.json());
+  if (token !== screenToken) return;
+  mode = "daily";
   show("play");
   isToday = entry.date === today;
   loadLevel(l);
@@ -403,6 +410,7 @@ async function openDaily(date?: string) {
 }
 
 function openLearn(step = 0) {
+  screenToken++;
   mode = "learn";
   tutorialStep = step;
   show("play");
@@ -411,6 +419,7 @@ function openLearn(step = 0) {
 }
 
 function openArchive() {
+  screenToken++;
   const today = localDate();
   const list = $("archive-list");
   list.replaceChildren(
@@ -423,7 +432,7 @@ function openArchive() {
         const best = save.results[d.date];
         b.innerHTML = `<span>Puzzle ${d.id} <span class="meta">${prettyDate(d.date)}</span></span>` +
           `<span class="meta">${TIER[d.tier]}${best ? `, <span class="done">solved in ${best}</span>` : ""}</span>`;
-        b.onclick = () => openDaily(d.date);
+        b.onclick = () => go({ kind: "puzzle", date: d.date });
         li.append(b);
         return li;
       }),
@@ -436,6 +445,52 @@ function show(which: "play" | "archive") {
   document.querySelector<HTMLElement>(".play")!.hidden = which !== "play";
   $("archive").hidden = which !== "archive";
 }
+
+// ---------- routes (lab#8) ----------
+// Each screen has its own URL (see route.ts): changing screen pushes a history
+// entry, so Back, Forward, reload and shared links work. Moves never do.
+let shownUrl = "";
+const currentPath = () => location.href.slice(location.origin.length);
+
+function routeContext() {
+  return { today: localDate(), dates: index.daily.map((d) => d.date), lessons: index.tutorial.length };
+}
+
+/** Put the route in the address bar and the title, adding a history entry only for "push". */
+function setUrl(r: Route, how: "push" | "replace") {
+  const url = location.pathname + location.search + routeHash(r);
+  if (url !== currentPath()) history[how === "push" ? "pushState" : "replaceState"](null, "", url);
+  shownUrl = location.href;
+  document.title = routeTitle(r);
+}
+
+function openRoute(r: Route) {
+  if (win.open) win.close();
+  if (r.kind === "today") openDaily();
+  else if (r.kind === "puzzle") openDaily(r.date);
+  else if (r.kind === "learn") openLearn(r.step);
+  else openArchive();
+}
+
+/** The visitor changes screen. */
+function go(r: Route) {
+  setUrl(r, "push");
+  openRoute(r);
+}
+
+/** Show the screen the address bar names (on load, Back and Forward). A
+ *  newcomer's home page is the first lesson; a link to a puzzle that isn't out,
+ *  a malformed one or an unknown route opens today's puzzle. Either way the URL
+ *  is replaced, not added to. */
+function fromLocation() {
+  if (!index || location.href === shownUrl) return;
+  const asked = parseRoute(location.hash, routeContext());
+  const r: Route = !asked ? { kind: "today" } : asked.kind === "today" && !save.learned ? { kind: "learn", step: 0 } : asked;
+  setUrl(r, "replace");
+  openRoute(r);
+}
+window.addEventListener("popstate", fromLocation);
+window.addEventListener("hashchange", fromLocation);
 
 function setNav(which: string) {
   document.querySelectorAll<HTMLButtonElement>("[data-nav]").forEach((b) => {
@@ -521,29 +576,30 @@ control($("restart"), restart);
 control($("hint"), showHint);
 document.querySelectorAll<HTMLButtonElement>("[data-nav]").forEach((b) => {
   b.onclick = () => {
-    if (b.dataset.nav === "today") openDaily();
-    else if (b.dataset.nav === "learn") openLearn(0);
-    else openArchive();
+    if (b.dataset.nav === "today") go({ kind: "today" });
+    else if (b.dataset.nav === "learn") go({ kind: "learn", step: 0 });
+    else go({ kind: "past" });
   };
 });
-document.querySelector<HTMLAnchorElement>(".brand")!.onclick = (e) => { e.preventDefault(); openDaily(); };
+document.querySelector<HTMLAnchorElement>(".brand")!.onclick = (e) => { e.preventDefault(); go({ kind: "today" }); };
 
 // The win dialog and the solved line share their Next and Copy result.
 function next() {
   win.close();
   if (mode === "learn") {
-    if (tutorialStep + 1 < index.tutorial.length) openLearn(tutorialStep + 1);
+    if (tutorialStep + 1 < index.tutorial.length) go({ kind: "learn", step: tutorialStep + 1 });
     else {
       save.learned = true;
       persist();
-      openDaily();
+      go({ kind: "today" });
     }
-  } else openArchive();
+  } else go({ kind: "past" });
 }
 async function copyResult(button: HTMLElement) {
   if (!solved) return;
   const { moves, hints } = solved;
-  const text = `Afterstep #${level.id}: ${moves} moves${hintText(hints)} (par ${level.par})${moves <= (level.par ?? 0) ? " ★" : ""}\nhttps://afterstep.brightloopapps.com`;
+  // Today's result links to the home page; an older puzzle's to that puzzle.
+  const text = `Afterstep #${level.id}: ${moves} moves${hintText(hints)} (par ${level.par})${moves <= (level.par ?? 0) ? " ★" : ""}\n${shareUrl(level.date!, localDate())}`;
   try {
     await navigator.clipboard.writeText(text);
     button.textContent = "Copied";
@@ -629,8 +685,7 @@ likeButtons.forEach((b, i) => {
 (async () => {
   board.tabIndex = 0;
   [index] = await Promise.all([fetch("/levels/index.json").then((r) => r.json()), init()]);
-  if (save.learned) openDaily();
-  else openLearn(0);
+  fromLocation();
   // Counts load after the first puzzle is on screen; nothing waits for them.
   likes.load();
 })();
