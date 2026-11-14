@@ -1,6 +1,6 @@
 import "./style.css";
 import init, { WasmGame } from "./wasm/afterstep_engine.js";
-import { createLikes, likeLabel, type LikeState } from "./likes";
+import { createLikes, LIKE_KEY, likeLabel, type LikeState } from "./likes";
 import { parseRoute, routeHash, routeTitle, shareUrl, type Route } from "./route";
 import { boardNews, boardState, type BoardState } from "./announce";
 import {
@@ -671,6 +671,10 @@ const likes = createLikes({
   api: "https://lab.brightloopapps.com",
   project: "afterstep",
   onChange: renderLikes,
+});
+// Another tab liked or unliked (or its storage was cleared): show it here too (lab#37).
+addEventListener("storage", (e) => {
+  if (e.storageArea === storage && (e.key === LIKE_KEY || e.key === null)) likes.sync();
 });
 
 function renderLikes(s: LikeState) {

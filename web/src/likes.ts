@@ -1,7 +1,8 @@
 // The like button's logic (lab#17), kept free of the DOM so tests/likes.test.mjs
 // can run it in Node. Counts come from the lab hub's like API. This browser keeps
 // only its own receipt (to take the like back on any later day): no cookies, and
-// nothing about the visitor is sent.
+// nothing about the visitor is sent. Every open tab shares that receipt, and the
+// page calls sync() when another tab changes it (lab#37).
 
 export const LIKE_KEY = "afterstep:like";
 const RECEIPT = /^[0-9a-f]{32}$/;
@@ -50,6 +51,8 @@ export function createLikes({ fetch, storage, api, project, onChange, timeoutMs 
   const state: LikeState = { ready: false, liked: false, count: 0, busy: false, note: "" };
   // This page's copy of the receipt, so a like can be taken back even where storage can't be used.
   let receipt = readReceipt(storage);
+  // Another tab changed the stored like while a press here was on its way.
+  let missed = false;
 
   const set = (next: Partial<LikeState>) => {
     Object.assign(state, next);
@@ -89,6 +92,7 @@ export function createLikes({ fetch, storage, api, project, onChange, timeoutMs 
     const wasLiked = state.liked;
     const before = state.count;
     const sent = receipt;
+    missed = false;
     set({ liked: !wasLiked, count: before + (wasLiked ? -1 : 1), busy: true, note: "" });
     let status = 0;
     let data: unknown = null;
@@ -106,10 +110,28 @@ export function createLikes({ fetch, storage, api, project, onChange, timeoutMs 
     } else if (!wasLiked && status === 200 && typeof (data as { receipt?: unknown })?.receipt === "string") {
       remember((data as { receipt: string }).receipt);
       set({ liked: true, count: n ?? before + 1, busy: false });
+    } else if (missed && !!readReceipt(storage) !== wasLiked) {
+      // It didn't go through, but another tab's like or unlike did meanwhile: show that one,
+      // on the server's count if it sent one (it already includes that tab's change).
+      receipt = readReceipt(storage);
+      set({ liked: !wasLiked, count: n ?? before + (wasLiked ? -1 : 1), busy: false });
     } else {
+      if (missed) receipt = readReceipt(storage) ?? receipt;
       set({ liked: wasLiked, count: n ?? before, busy: false, note: status === 409 || status === 429 ? NOTES[status] : NOTES.other });
     }
+    missed = false;
   }
 
-  return { state, load, toggle };
+  /** Another tab liked or unliked (a `storage` event for LIKE_KEY): show it here too, with that
+   *  tab's change to the count. A press on its way here isn't disturbed; it catches up when it settles. */
+  function sync() {
+    if (state.busy) {
+      missed = true;
+      return;
+    }
+    receipt = readReceipt(storage);
+    if (state.ready && !!receipt !== state.liked) set({ liked: !!receipt, count: state.count + (receipt ? 1 : -1), note: "" });
+  }
+
+  return { state, load, toggle, sync };
 }

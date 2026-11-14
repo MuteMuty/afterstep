@@ -41,7 +41,10 @@
 // with the stored receipt (also days later); the win dialog's heart, 409 and
 // 429 notes, keyboard, labels and no cookies; the page is no taller with the
 // heart at 390x844; with the API resting (503), unreachable or slow the game
-// plays at once and the heart never shows.
+// plays at once and the heart never shows. Two tabs (lab#37): in one browser
+// context, a like or unlike in one tab shows in the other with the count +-1
+// and no request; a like on its way in one tab while the other's lands isn't
+// disturbed and ends on the other's like, counted once, with no note.
 // Font (lab#36): Young Serif loads, from Afterstep's own origin.
 // Routes (lab#8): today (bare URL), Past puzzles (#/past), a past puzzle
 // (#/puzzle/<date>) and lessons (#/learn/<n>) each push one history entry
@@ -1067,14 +1070,16 @@ async function fitScreens(browser, name, viewport, colorScheme) {
 // serves its own font (lab#36), so Google Fonts isn't allowed either.
 const LAB = "https://lab.brightloopapps.com";
 
-/** A stateful stand-in for the hub's /api/likes. `mode`: "ok", "resting" (what the
- *  live hub answers until its migration: 204 to a quiet GET, 503 otherwise),
- *  "down" (unreachable) or "slow" (answers after 8 s). `next` forces the status
- *  of the next POST or DELETE (409, 429). `delay` holds each POST and DELETE. */
-async function mockLikes(page, opts = {}) {
-  const api = { mode: "ok", total: 12, delay: 0, next: null, receipts: [], calls: [], ...opts };
+/** A stateful stand-in for the hub's /api/likes, on a page or a whole browser
+ *  context. `mode`: "ok", "resting" (what the live hub answers until its
+ *  migration: 204 to a quiet GET, 503 otherwise), "down" (unreachable) or "slow"
+ *  (answers after 8 s). `next` forces the status of the next POST or DELETE
+ *  (409, 429). `delay` holds each POST and DELETE. `network`: like the live API,
+ *  a second like while this network's like stands answers 409. */
+async function mockLikes(target, opts = {}) {
+  const api = { mode: "ok", total: 12, delay: 0, next: null, network: false, receipts: [], calls: [], ...opts };
   const origin = new URL(base).origin;
-  await page.route(`${LAB}/**`, async (route) => {
+  await target.route(`${LAB}/**`, async (route) => {
     const req = route.request(), url = new URL(req.url()), method = req.method();
     const cors = { "access-control-allow-origin": origin, vary: "Origin", "cache-control": "no-store" };
     const send = (status, body) => route.fulfill({ status, headers: cors, contentType: "application/json", body: body === undefined ? undefined : JSON.stringify(body) }).catch(() => {});
@@ -1091,7 +1096,7 @@ async function mockLikes(page, opts = {}) {
     if (forced === 429) return send(429, { error: "That's a lot of likes. Try again in a minute." });
     const counts = () => ({ total: api.total, week: 3 });
     if (method === "POST") {
-      if (forced === 409) return send(409, { error: "This network already liked it today.", ...counts() });
+      if (forced === 409 || (api.network && api.receipts.length)) return send(409, { error: "This network already liked it today.", ...counts() });
       const receipt = [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, "0")).join("");
       api.receipts.push(receipt);
       api.total++;
@@ -1112,7 +1117,11 @@ async function mockLikes(page, opts = {}) {
 /** A new page with the like API mocked (working, 12 likes, unless `likes` says
  *  otherwise) that fails the run on a request to anywhere else. */
 async function newPage(browser, opts, likes = {}) {
-  const page = await browser.newPage(opts);
+  const page = guard(await browser.newPage(opts));
+  page.likes = await mockLikes(page, likes);
+  return page;
+}
+function guard(page) {
   const own = new URL(base).origin;
   page.fonts = [];
   page.on("request", (r) => {
@@ -1121,7 +1130,6 @@ async function newPage(browser, opts, likes = {}) {
     if (u.startsWith("data:") || u.startsWith("blob:") || new URL(u).origin === own) return;
     if (!u.startsWith(`${LAB}/api/likes`)) fail(`request to somewhere other than Afterstep and the like API: ${u}`);
   });
-  page.likes = await mockLikes(page, likes);
   return page;
 }
 
@@ -1284,6 +1292,84 @@ async function likesFlow(browser) {
   }
 }
 
+// Two tabs (lab#37): two pages in one browser context share localStorage and one
+// mocked API that, like the live one, answers 409 to a second like from this
+// network while the first stands.
+async function likeTabs(browser) {
+  const name = "like-tabs";
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const api = await mockLikes(ctx, { network: true });
+  const tabs = [];
+  for (const tab of ["A", "B"]) {
+    const p = guard(await ctx.newPage());
+    // The only console error allowed: the browser's own line for the 409 below.
+    p.on("console", (m) => m.type() === "error" && !/status of 409/.test(m.text()) && fail(`${name} ${tab}: console error: ${m.text()}`));
+    p.on("pageerror", (e) => fail(`${name} ${tab}: page error: ${e.message}`));
+    await p.goto(base, { waitUntil: "networkidle" });
+    await p.waitForSelector("#like-foot:not([hidden])", { timeout: 3000 }).catch(() => fail(`${name} ${tab}: the heart should show`));
+    tabs.push(p);
+  }
+  const [a, b] = tabs;
+  // Both hearts on the page (the footer's and the hidden win dialog's), and what is read out.
+  const look = (p) => p.evaluate(() => ({
+    hearts: [...document.querySelectorAll(".like")].map((h) => `${h.getAttribute("aria-pressed")} ${h.getAttribute("aria-label")} ${h.querySelector(".like-n").textContent}${h.hasAttribute("aria-busy") ? " busy" : ""}`),
+    note: [...document.querySelectorAll(".like-note")].some((n) => !n.hidden) || document.querySelector("#like-live").textContent !== "",
+  }));
+  const want = (liked, n) => [0, 1].map(() => `${liked} Like Afterstep, ${n} ${n === 1 ? "like" : "likes"} ${n}`);
+  const shows = async (p, tab, liked, n, why) => {
+    const ok = await p.waitForFunction((w) => [...document.querySelectorAll(".like")].every((h, i) => `${h.getAttribute("aria-pressed")} ${h.getAttribute("aria-label")} ${h.querySelector(".like-n").textContent}` === w[i]), want(liked, n), { timeout: 2000 }).then(() => true, () => false);
+    const got = await look(p);
+    if (!ok || got.note) fail(`${name}: ${why}: tab ${tab} should show ${JSON.stringify(want(liked, n)[0])} with no note (got ${JSON.stringify(got)})`);
+  };
+  const settled = (p) => p.waitForFunction(() => !document.querySelector("#like-foot").hasAttribute("aria-busy"));
+
+  // A likes: B follows, +1, without asking the API anything.
+  await a.click("#like-foot");
+  await settled(a);
+  const asked = api.calls.length;
+  await shows(b, "B", true, 13, "after a like in tab A");
+  if (api.calls.length !== asked) fail(`${name}: tab B shouldn't ask the API to show A's like (${JSON.stringify(api.calls.slice(asked))})`);
+  await a.locator(".foot").screenshot({ path: join(out, `${name}-a.png`) });
+  await b.locator(".foot").screenshot({ path: join(out, `${name}-b.png`) });
+
+  // B unlikes with A's receipt: A follows, -1.
+  await b.click("#like-foot");
+  await settled(b);
+  const del = api.calls.findLast((c) => c.method === "DELETE");
+  if (!del || api.receipts.length || api.total !== 12) fail(`${name}: tab B should unlike with A's receipt (sent ${del?.body}, server has ${api.receipts.length} likes, total ${api.total})`);
+  await shows(a, "A", false, 12, "after an unlike in tab B");
+
+  // A race: B likes, and A's like starts before B's comes back. A shows its press at
+  // once, isn't flipped back when B's lands, and its 409 ends on B's like, counted once.
+  api.delay = 800;
+  await a.evaluate(() => {
+    const h = document.querySelector("#like-foot");
+    const seen = (window.__seen = []);
+    const note = () => { const s = `${h.getAttribute("aria-pressed")} ${h.getAttribute("aria-label")}`; if (seen.at(-1) !== s) seen.push(s); };
+    new MutationObserver(note).observe(h, { attributes: true, attributeFilter: ["aria-pressed", "aria-label"] });
+  });
+  await b.click("#like-foot");
+  await a.waitForTimeout(250);
+  await a.click("#like-foot");
+  await settled(b);
+  await settled(a);
+  api.delay = 0;
+  await shows(b, "B", true, 13, "after its like in the race");
+  await shows(a, "A", true, 13, "after its like met B's");
+  const seen = await a.evaluate(() => window.__seen);
+  if (JSON.stringify(seen) !== JSON.stringify(["true Like Afterstep, 13 likes"])) fail(`${name}: tab A's heart should go to pressed, 13 once and stay there (went ${JSON.stringify(seen)})`);
+  const stored = await a.evaluate(() => JSON.parse(localStorage.getItem("afterstep:like") || "null"));
+  if (api.total !== 13 || api.receipts.length !== 1 || stored?.receipt !== api.receipts[0]) fail(`${name}: one like should stand, with its receipt stored (server ${api.total}, ${api.receipts.length} receipts, stored ${JSON.stringify(stored)})`);
+
+  // A unlikes with B's receipt: both end unliked, and the server agrees.
+  await a.click("#like-foot");
+  await settled(a);
+  await shows(b, "B", false, 12, "after the unlike in tab A");
+  if (api.receipts.length || api.total !== 12) fail(`${name}: tab A should unlike with B's receipt (server has ${api.receipts.length}, total ${api.total})`);
+  console.log(`${name}: likes and unlikes show in the other tab with no request; a like on its way isn't disturbed and counts once`);
+  await ctx.close();
+}
+
 // Routes (lab#8): each screen has its own URL. Walks today -> Past puzzles -> a
 // past puzzle -> lessons 1 and 2 by clicking, then Back, Forward and reload.
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -1435,6 +1521,7 @@ const browser = await chromium.launch({ executablePath: browserPath });
 try {
   await routes(browser, "routes", { width: 1280, height: 900 });
   await likesFlow(browser);
+  await likeTabs(browser);
   await keyboardStart(browser, "desktop-dark", { width: 1280, height: 900 });
   await keysHint(browser, "keys-hint");
   await session(browser, "desktop-dark", { width: 1280, height: 900 }, "dark");
