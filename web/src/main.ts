@@ -3,23 +3,11 @@ import init, { WasmGame } from "./wasm/afterstep_engine.js";
 import { createLikes, LIKE_KEY, likeLabel, type LikeState } from "./likes";
 import { parseRoute, routeHash, routeTitle, shareUrl, type Route } from "./route";
 import { boardNews, boardState, type BoardState } from "./announce";
+import { fetchChecked, isIndex, isLevel, type Index, type Level } from "./levels";
 import {
   archiveParts, bestResult, countHint, hintText, hintsSeen, readSave, recordResult, resultLine, shareLine, total, winTitle,
   type Result,
 } from "./score";
-
-type Level = {
-  id: number | string;
-  date?: string;
-  tier?: string;
-  name?: string;
-  tip?: string;
-  delay: number;
-  par?: number;
-  grid: string[];
-};
-type DailyEntry = { id: number; date: string; tier: string; par: number };
-type Index = { daily: DailyEntry[]; tutorial: Level[] };
 
 const UP = 0, DOWN = 1, LEFT = 2, RIGHT = 3, WAIT = 4;
 const DELTA: Record<number, [number, number]> = { 0: [0, -1], 1: [0, 1], 2: [-1, 0], 3: [1, 0], 4: [0, 0] };
@@ -40,6 +28,10 @@ const solvedEl = $("solved");
 const solvedText = $("solved-text");
 const solvedActions = $("solved-actions");
 const boardNewsEl = $("board-news");
+const loadEl = $("load");
+const loadText = $("load-text");
+const retryButton = $<HTMLButtonElement>("retry");
+const loadLive = $("load-live");
 
 // ---------- persistence (per-browser only) ----------
 // What's kept and how old saves read: see score.ts.
@@ -256,7 +248,7 @@ function note(...parts: (string | Node)[]) {
  *  winnable position is a nudge about the idea instead. On a daily each move hint
  *  counts as a move (the nudge and the undo offer don't). */
 function showHint() {
-  if (!game || win.open) return;
+  if (!game || loading || win.open) return;
   if (solved || game.won()) return nudgeSolved();
   const g = game;
   const here = g.history();
@@ -287,6 +279,7 @@ function showHint() {
     undo.textContent = `Undo ${n} ${n === 1 ? "move" : "moves"}?`;
     undo.setAttribute("aria-keyshortcuts", "U");
     const take = () => {
+      if (loading) return;
       for (let i = 0; i < n; i++) g.undo();
       render();
       board.focus({ preventScroll: true });
@@ -310,7 +303,7 @@ function bump(el: HTMLElement) {
 }
 
 function act(a: number) {
-  if (!game || win.open) return;
+  if (!game || loading || win.open) return;
   if (solved || game.won()) return nudgeSolved();
   if (!game.step(a)) {
     bump(els.player);
@@ -319,9 +312,10 @@ function act(a: number) {
   if (game.echo_blocked_last()) bump(els.echo);
   render();
   if (game.won()) {
-    const g = game;
-    // Only celebrate if the same game is still on screen (the player may have navigated away).
-    setTimeout(() => { if (game === g && g.won()) onWin(); }, 160);
+    const g = game, token = screenToken;
+    // Only celebrate if the same game is still on screen (the player may have
+    // navigated away, or another puzzle may be on its way).
+    setTimeout(() => { if (game === g && token === screenToken && !loading && g.won()) onWin(); }, 160);
   }
 }
 
@@ -422,14 +416,74 @@ function loadLevel(l: Level) {
 // moved on (Back, Forward, another click) is dropped.
 let screenToken = 0;
 
+// ---------- loading (lab#40) ----------
+// While a puzzle is on its way the screen before it stays up, but game keys,
+// swipes, the d-pad, Undo, Start over and Hint do nothing to it (and nudge
+// nothing). A load that takes longer than LOAD_NOTE_MS says so, so a fast one
+// never flashes a message; one that fails (offline, a 404, not a level) says so
+// with Retry, and Back and the nav still work.
+const LOAD_NOTE_MS = 600;
+let loading = false;
+let loadTimer = 0;
+
+/** A new screen: whatever was loading for the old one is dropped. Gives the new screen's token. */
+function newScreen(): number {
+  loading = false;
+  clearTimeout(loadTimer);
+  return ++screenToken;
+}
+
+/** Start loading for the screen `token`: game input stops now, and a note shows if it's slow. */
+function startLoad(token: number) {
+  loading = true;
+  // Cleared, so a failure that repeats after Retry is read out again.
+  loadLive.textContent = "";
+  clearTimeout(loadTimer);
+  loadTimer = window.setTimeout(() => { if (token === screenToken) loadNote("Loading the puzzle…"); }, LOAD_NOTE_MS);
+}
+
+function endLoad() {
+  loading = false;
+  clearTimeout(loadTimer);
+}
+
+/** The loading screen, in the place of the play screen or Past puzzles: `text`,
+ *  read out politely, and Retry when `retry` is given. */
+function loadNote(text: string, retry?: () => void) {
+  const again = !loadEl.hidden && !retryButton.hidden && loadText.textContent === text;
+  show("load");
+  loadText.textContent = text;
+  loadLive.textContent = text;
+  retryButton.hidden = !retry;
+  retryButton.onclick = retry ?? null;
+  if (!retry) return;
+  // Retry that failed again shakes the message, so the press shows it was tried.
+  if (again) bump(loadText);
+  // Focus that was on the screen just hidden goes to Retry; focus on the nav stays.
+  const a = document.activeElement;
+  if (!a || a === document.body || a.closest("[hidden]")) retryButton.focus({ preventScroll: true });
+}
+
+function loadFailed(text: string, retry: () => void) {
+  endLoad();
+  loadNote(text, retry);
+}
+
 async function openDaily(date?: string) {
-  const token = ++screenToken;
+  const token = newScreen();
   if (!save.learned) { save.learned = true; persist(); }
   const today = localDate();
   const avail = index.daily.filter((d) => d.date <= today);
   const entry = (date && avail.find((d) => d.date === date)) || avail[avail.length - 1] || index.daily[0];
-  const l: Level = await fetch(`/levels/daily/${entry.date}.json`).then((r) => r.json());
+  startLoad(token);
+  const l = await fetchChecked((u) => fetch(u), `/levels/daily/${entry.date}.json`, isLevel);
   if (token !== screenToken) return;
+  if (!l) {
+    loadFailed("This puzzle didn't load. Check your connection and try again.", () => openDaily(date));
+    setNav(entry.date === today ? "today" : "archive");
+    return;
+  }
+  endLoad();
   mode = "daily";
   show("play");
   isToday = entry.date === today;
@@ -438,7 +492,7 @@ async function openDaily(date?: string) {
 }
 
 function openLearn(step = 0) {
-  screenToken++;
+  newScreen();
   mode = "learn";
   tutorialStep = step;
   show("play");
@@ -447,7 +501,7 @@ function openLearn(step = 0) {
 }
 
 function openArchive() {
-  screenToken++;
+  newScreen();
   const today = localDate();
   const list = $("archive-list");
   list.replaceChildren(
@@ -469,9 +523,10 @@ function openArchive() {
   setNav("archive");
 }
 
-function show(which: "play" | "archive") {
-  document.querySelector<HTMLElement>(".play")!.hidden = which !== "play";
+function show(which: "play" | "archive" | "load") {
+  playEl.hidden = which !== "play";
   $("archive").hidden = which !== "archive";
+  loadEl.hidden = which !== "load";
 }
 
 // ---------- routes (lab#8) ----------
@@ -494,6 +549,8 @@ function setUrl(r: Route, how: "push" | "replace") {
 
 function openRoute(r: Route) {
   if (win.open) win.close();
+  // Afterstep itself didn't load (or hasn't yet): loading it opens the route.
+  if (!index) return void boot();
   if (r.kind === "today") openDaily();
   else if (r.kind === "puzzle") openDaily(r.date);
   else if (r.kind === "learn") openLearn(r.step);
@@ -575,7 +632,7 @@ board.addEventListener("pointerup", (e) => {
 /** Undo a move. On a solved board it also leaves the solved state, even when
  *  there's no move to undo (a solved daily opened again starts at move 0). */
 function undo() {
-  if (!game) return;
+  if (!game || loading) return;
   const wasSolved = !!solved;
   if (game.undo() || wasSolved) {
     solved = null;
@@ -583,7 +640,7 @@ function undo() {
   }
 }
 function restart() {
-  if (!game) return;
+  if (!game || loading) return;
   game.reset();
   // Back at the start, the next first press is the free nudge again. Hints
   // already counted stay counted (lab#25).
@@ -723,10 +780,32 @@ likeButtons.forEach((b, i) => {
 });
 
 // ---------- boot ----------
-(async () => {
-  board.tabIndex = 0;
-  [index] = await Promise.all([fetch("/levels/index.json").then((r) => r.json()), init()]);
+// The index (dailies and lessons) and the engine. If either doesn't load, the
+// loading screen offers Retry, as for a puzzle (lab#40).
+let engine: Promise<boolean> | null = null;
+function loadEngine(): Promise<boolean> {
+  engine ??= init().then(() => true, () => { engine = null; return false; });
+  return engine;
+}
+let booting = false;
+let likesLoaded = false;
+async function boot() {
+  if (booting) return;
+  booting = true;
+  startLoad(newScreen());
+  const [got, ready] = await Promise.all([fetchChecked((u) => fetch(u), "/levels/index.json", isIndex), loadEngine()]);
+  booting = false;
+  if (!got || !ready) return loadFailed("Afterstep didn't load. Check your connection and try again.", boot);
+  endLoad();
+  index = got;
+  // Open whatever the address bar names now, also if a nav button changed it meanwhile.
+  shownUrl = "";
   fromLocation();
   // Counts load after the first puzzle is on screen; nothing waits for them.
-  likes.load();
-})();
+  if (!likesLoaded) {
+    likesLoaded = true;
+    likes.load();
+  }
+}
+board.tabIndex = 0;
+boot();
