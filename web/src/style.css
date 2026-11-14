@@ -341,12 +341,12 @@ button.hinted { border-color: var(--sun); box-shadow: 0 0 0 3px var(--sun-glow);
 @media (pointer: coarse), (hover: none) {
   .dpad { display: grid; }
   .keys, .hint-key { display: none; }
-  .top nav button, .controls button { min-height: 44px; }
+  .top nav button, .controls button, .load button { min-height: 44px; }
 }
 /* Some touch screens report a fine pointer: main.ts marks the page on the first touch. */
 .touch .dpad { display: grid; }
 .touch .keys, .touch .hint-key { display: none; }
-.touch .top nav button, .touch .controls button { min-height: 44px; }
+.touch .top nav button, .touch .controls button, .touch .load button { min-height: 44px; }
 
 /* ---------- solved line ---------- */
 /* Once solved (and the win dialog closed), the result takes the status line's
@@ -452,6 +452,15 @@ button.hinted { border-color: var(--sun); box-shadow: 0 0 0 3px var(--sun-glow);
 .archive .done { color: var(--sun); }
 .archive .done > span { white-space: nowrap; }
 
+/* ---------- loading (lab#40) ---------- */
+/* A slow or failed load: a short line, and Retry when it failed. */
+.load { text-align: center; padding: 3rem 0 2rem; }
+.load[hidden] { display: none; }
+.load-text { margin: 0 auto; max-width: 34ch; font-size: 1.05rem; text-wrap: balance; }
+.load-text.bump { animation: shake 0.22s ease; }
+.load button { margin-top: 1rem; }
+.load button[hidden] { display: none; }
+
 /* ---------- win dialog ---------- */
 dialog {
   border: 1.5px solid var(--line);
@@ -526,5 +535,5 @@ dialog h2 { font-family: var(--font-display); font-weight: 400; font-size: 2rem;
 
 @media (prefers-reduced-motion: reduce) {
   .piece, .cell.door::after, .cell.plate::after { transition: none; }
-  .echo.bump::before, .player.bump, .hint-mark::before, .solved.bump { animation: none; }
+  .echo.bump::before, .player.bump, .hint-mark::before, .solved.bump, .load-text.bump { animation: none; }
 }

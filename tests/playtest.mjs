@@ -53,6 +53,12 @@
 // a past puzzle's copied result links to it, today's to the home page; links
 // to a future, missing or malformed date or an unknown route open today's
 // puzzle with the URL replaced and no console error.
+// Level loading (lab#40): a daily's request blocked, refused (404) or not a
+// level, and the index blocked, show a short message with Retry (announced,
+// focused, Back works) and no page or console error but the browser's own line
+// for each blocked request; Retry loads it once the network is back. Keys, the
+// d-pad and Hint during a slow load leave the old board alone (solved or not)
+// and nudge nothing; a slow load says so, a quick one shows no message.
 //
 // Usage: node tests/playtest.mjs <baseUrl>
 // Env:   PLAYTEST_BROWSER  Chromium-based browser executable (default: Brave)
@@ -1517,9 +1523,212 @@ async function routes(browser, name, viewport) {
   console.log(`${name}: ${bad.length} bad links open today's puzzle at "/" with the URL replaced`);
 }
 
+// ── Level loading (lab#40) ─────────────────────────────────────────────────
+// A daily's request blocked (offline), refused (404) or answered with something
+// that isn't a level shows a short message with Retry, read out politely, with
+// focus on Retry, no page error (an unhandled rejection is one) and no console
+// error but the browser's own line for each request blocked or refused here;
+// Back and Forward still work, and Retry loads the puzzle once the network is
+// back. Afterstep's own index not loading does the same. While a puzzle is on its
+// way (a delayed request), game keys, the d-pad, Undo, Start over and Hint leave
+// the old board alone, also a solved one (nothing nudges); a slow load says so
+// after a moment, and a quick one shows no message at all.
+const LOAD_FAILED = "This puzzle didn't load. Check your connection and try again.";
+async function levelLoad(browser, name, viewport) {
+  const dates = readdirSync(join(repo, "levels/daily")).map((f) => f.replace(".json", "")).filter((d) => d < today).sort();
+  const [solvedDate, pastDate] = dates.slice(-2);
+  if (!pastDate) return fail(`${name}: need two puzzles before today to test with`);
+  const past = JSON.parse(readFileSync(join(repo, "levels/daily", `${pastDate}.json`), "utf8"));
+  const solvedPast = JSON.parse(readFileSync(join(repo, "levels/daily", `${solvedDate}.json`), "utf8"));
+
+  const page = await newPage(browser, { viewport });
+  // The browser's own line for a request blocked or refused below is expected,
+  // once per such request; any other console error fails.
+  let netLines = 0, netExpected = 0;
+  page.on("console", (m) => {
+    if (m.type() !== "error") return;
+    if (/^Failed to load resource: (net::ERR_INTERNET_DISCONNECTED|the server responded with a status of 404\b)/.test(m.text())) netLines++;
+    else fail(`${name}: console error: ${m.text()}`);
+  });
+  page.on("pageerror", (e) => fail(`${name}: page error: ${e.message}`));
+  await page.addInitScript((s) => location.protocol.startsWith("http") && !localStorage.getItem("afterstep:v1") && localStorage.setItem("afterstep:v1", s),
+    JSON.stringify({ learned: true, results: { [solvedDate]: solvedPast.par } }));
+  // Notes whenever the loading screen is visible, to catch one that only flashes.
+  await page.addInitScript(() => {
+    window.__loadSeen = false;
+    const look = () => {
+      const l = document.querySelector("#load");
+      if (l && !l.hidden && l.offsetParent) window.__loadSeen = true;
+      requestAnimationFrame(look);
+    };
+    requestAnimationFrame(look);
+  });
+  await page.goto(base, { waitUntil: "networkidle" });
+  if (!(await page.waitForSelector(".cell", { timeout: 8000 }).catch(() => null))) {
+    fail(`${name}: board never rendered`);
+    return page.close();
+  }
+
+  const state = () => page.evaluate(() => {
+    const none = { hidden: true, getAttribute: () => null, textContent: "" };
+    const load = document.querySelector("#load") ?? none, retry = document.querySelector("#retry") ?? none;
+    return {
+      url: location.href.slice(location.origin.length),
+      screen: !document.querySelector(".play").hidden ? document.querySelector("#level-title").textContent : !document.querySelector("#archive").hidden ? "past" : load.hidden ? "none" : "load",
+      text: load.hidden ? null : document.querySelector("#load-text").textContent,
+      retry: !load.hidden && !retry.hidden && !!retry.offsetParent,
+      live: (document.querySelector("#load-live") ?? none).textContent,
+      liveRole: (document.querySelector("#load-live") ?? none).getAttribute("role"),
+      focus: document.activeElement.id,
+      nav: document.querySelector("[data-nav][aria-current]")?.dataset.nav,
+      moves: Number(document.querySelector("#moves").textContent.match(/Moves\s*(\d+)/)?.[1]),
+      hint: !document.querySelector("#hint-note").hidden || !document.querySelector(".hint-mark").hidden,
+      bumped: [...document.querySelectorAll(".player, .echo, #solved")].filter((e) => e.classList.contains("bump")).map((e) => e.id || e.className),
+      solved: document.querySelector("#solved-text").textContent,
+    };
+  });
+  const failedNow = (want) => page.waitForFunction((want) => {
+    const l = document.querySelector("#load");
+    return l && !l.hidden && !document.querySelector("#retry").hidden && document.querySelector("#load-text").textContent === want;
+  }, want, { timeout: 3000 }).then(() => true, () => false);
+  // Focus that was on the screen the message replaces moves to Retry; focus on
+  // the nav stays there, and Tab goes on to Retry.
+  async function expectFailed(label, want = LOAD_FAILED) {
+    if (!(await failedNow(want))) {
+      fail(`${name}: ${label}: should say "${want}" with Retry, got ${JSON.stringify(await state())}`);
+      return null;
+    }
+    const s = await state();
+    if (s.live !== want || s.liveRole !== "status") fail(`${name}: ${label}: the message should be read out politely (live "${s.live}", role ${s.liveRole})`);
+    const onNav = await page.evaluate(() => !!document.activeElement.closest("nav"));
+    if (onNav) {
+      for (let i = 0; i < 4 && (await page.evaluate(() => document.activeElement.closest("nav"))); i++) await page.keyboard.press("Tab");
+      const next = await page.evaluate(() => document.activeElement.id);
+      if (next !== "retry") fail(`${name}: ${label}: Tab from the nav should reach Retry next, reached "${next}"`);
+    } else if (s.focus !== "retry") fail(`${name}: ${label}: focus should be on Retry, is on "${s.focus}"`);
+    return s;
+  }
+  const settle = (title) => page.waitForFunction((t) => !document.querySelector(".play").hidden && document.querySelector("#level-title").textContent === t && document.querySelector("#load")?.hidden !== false, title, { timeout: 4000 }).then(() => true, () => false);
+
+  // Offline: Past puzzles, then a puzzle whose request can't go out.
+  const daily = `**/levels/daily/${pastDate}.json`;
+  let hits = 0;
+  await page.route(daily, (r) => { hits++; netExpected++; return r.abort("internetdisconnected"); });
+  await page.click('[data-nav="archive"]');
+  await page.waitForSelector("#archive:not([hidden])");
+  await page.locator("#archive-list button").filter({ hasText: new RegExp(`^Puzzle ${past.id}\\b`) }).click();
+  let s = await expectFailed("offline");
+  if (s && s.focus !== "retry") fail(`${name}: offline: a puzzle picked from Past puzzles should leave focus on Retry, is on "${s.focus}"`);
+  if (s && (s.url !== `/#/puzzle/${pastDate}` || s.nav !== "archive")) fail(`${name}: offline: the URL and nav should name the puzzle asked for, got ${JSON.stringify(s)}`);
+  await page.screenshot({ path: join(out, `${name}-failed.png`) });
+
+  // Back and Forward still work.
+  await page.goBack();
+  if (!(await page.waitForFunction(() => !document.querySelector("#archive").hidden && document.querySelector("#load")?.hidden !== false, null, { timeout: 3000 }).catch(() => null)))
+    fail(`${name}: Back from the message should show Past puzzles, got ${JSON.stringify(await state())}`);
+  await page.goForward();
+  await expectFailed("Forward to the puzzle, still offline");
+
+  // Retry by keyboard: refused (404), then not a level, then the network is back.
+  await page.unroute(daily);
+  await page.route(daily, (r) => { hits++; netExpected++; return r.fulfill({ status: 404, contentType: "text/html", body: "<h1>Not found</h1>" }); });
+  let before = hits;
+  await page.keyboard.press("Enter");
+  await page.waitForTimeout(300);
+  if (hits !== before + 1) fail(`${name}: Retry should ask for the puzzle again (${hits - before} requests)`);
+  await expectFailed("Retry, then a 404");
+  await page.unroute(daily);
+  await page.route(daily, (r) => { hits++; return r.fulfill({ status: 200, contentType: "text/html", body: "<!doctype html><title>Afterstep</title>" }); });
+  before = hits;
+  await page.keyboard.press("Enter");
+  await page.waitForTimeout(300);
+  if (hits !== before + 1) fail(`${name}: Retry should ask for the puzzle again (${hits - before} requests)`);
+  await expectFailed("Retry, then a page that isn't a level");
+  await page.unroute(daily);
+  await page.keyboard.press("Enter");
+  if (!(await settle(`Puzzle ${past.id}`))) fail(`${name}: Retry with the network back should open puzzle ${past.id}, got ${JSON.stringify(await state())}`);
+  s = await state();
+  if (s.focus !== "board" || s.moves !== 0 || s.text !== null) fail(`${name}: after Retry the puzzle should be on screen at move 0 with the board focused, got ${JSON.stringify(s)}`);
+
+  // A quick load (300 ms) shows no message.
+  const delay = (date, ms) => page.route(`**/levels/daily/${date}.json`, (r) => setTimeout(() => r.continue().catch(() => {}), ms));
+  await delay(solvedDate, 300);
+  await page.evaluate(() => { window.__loadSeen = false; });
+  await page.evaluate((d) => { location.hash = `#/puzzle/${d}`; }, solvedDate);
+  if (!(await settle(`Puzzle ${solvedPast.id}`))) fail(`${name}: a quick load should open puzzle ${solvedPast.id}`);
+  if (await page.evaluate(() => window.__loadSeen)) fail(`${name}: a load of 300 ms should show no message`);
+  await page.unroute(`**/levels/daily/${solvedDate}.json`);
+
+  // Keys during a slow load (1.5 s): first from a solved board (nothing nudges),
+  // then from one in play (nothing moves); the slow load says so after a moment.
+  const solvedLine = (await state()).solved;
+  if (!solvedLine.startsWith("Solved in")) fail(`${name}: puzzle ${solvedPast.id} should open solved from the save, says "${solvedLine}"`);
+  for (const [from, to, toTitle] of [[solvedPast, pastDate, `Puzzle ${past.id}`], [past, today, `Puzzle ${level.id}`]]) {
+    const label = from === solvedPast ? "keys on a solved board during a slow load" : "keys on a board in play during a slow load";
+    if (from === past) {
+      // Three moves, with the nudge taken on the way, so H would now mark a move.
+      await play(page, past.solution.slice(0, 2));
+      await page.keyboard.press("KeyH");
+      await play(page, past.solution.slice(2, 3));
+    }
+    // Any nudge from here on is new.
+    await page.evaluate(() => document.querySelectorAll(".bump").forEach((e) => e.classList.remove("bump")));
+    const was = await state();
+    await delay(to, 1500);
+    const t0 = Date.now();
+    await page.evaluate((d) => { location.hash = d === "" ? "#/" : `#/puzzle/${d}`; }, to === today ? "" : to);
+    for (const k of ["ArrowRight", "ArrowDown", "Space", "KeyH", "KeyZ", "KeyR", "KeyU", "KeyH"]) await page.keyboard.press(k);
+    await page.evaluate(() => document.querySelectorAll(".dpad button").forEach((b) => b.click()));
+    for (const b of ["#wait", "#hint", "#undo", "#restart"]) await page.click(b);
+    const during = await state();
+    const quick = Date.now() - t0 < 550;
+    if (during.screen !== was.screen || during.moves !== was.moves || during.hint || during.bumped.length || during.solved !== was.solved)
+      fail(`${name}: ${label}: the old board should be left alone, was ${JSON.stringify(was)}, is ${JSON.stringify(during)}`);
+    if (quick && during.text !== null) fail(`${name}: ${label}: no message in the first moment, got "${during.text}"`);
+    if (!(await page.waitForFunction(() => document.querySelector("#load-text")?.textContent === "Loading the puzzle…" && !document.querySelector("#load").hidden, null, { timeout: 1300 }).catch(() => null)))
+      fail(`${name}: ${label}: a slow load should say so after a moment, got ${JSON.stringify(await state())}`);
+    else if (from === past) await page.screenshot({ path: join(out, `${name}-loading.png`) });
+    if (!(await settle(toTitle))) fail(`${name}: ${label}: ${toTitle} should open once it loads`);
+    const after = await state();
+    if (after.moves !== 0 || after.hint || after.focus !== "board") fail(`${name}: ${label}: the new puzzle should start at move 0, no hint, board focused, got ${JSON.stringify(after)}`);
+    await page.unroute(`**/levels/daily/${to}.json`);
+  }
+  if (netLines > netExpected || netLines === 0) fail(`${name}: expected the browser's network line for each of the ${netExpected} blocked or refused requests, got ${netLines}`);
+  console.log(`${name}: offline, 404 and not-a-level show the message with Retry; Back works; Retry loads; keys during a slow load leave the old board alone (${netLines} expected network lines)`);
+  await page.close();
+
+  // Afterstep's own index blocked (a touch phone): the same message, then Retry.
+  const phone = await newPage(browser, { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  let phoneLines = 0, phoneExpected = 0;
+  phone.on("console", (m) => {
+    if (m.type() !== "error") return;
+    if (/^Failed to load resource: net::ERR_INTERNET_DISCONNECTED/.test(m.text())) phoneLines++;
+    else fail(`${name} phone: console error: ${m.text()}`);
+  });
+  phone.on("pageerror", (e) => fail(`${name} phone: page error: ${e.message}`));
+  await phone.route("**/levels/index.json", (r) => { phoneExpected++; return r.abort("internetdisconnected"); });
+  await phone.goto(base, { waitUntil: "load" });
+  const BOOT_FAILED = "Afterstep didn't load. Check your connection and try again.";
+  const bootFailed = await phone.waitForFunction((t) => document.querySelector("#load")?.hidden === false && document.querySelector("#load-text").textContent === t && !document.querySelector("#retry").hidden, BOOT_FAILED, { timeout: 4000 }).then(() => true, () => false);
+  if (!bootFailed) fail(`${name} phone: a blocked index should say "${BOOT_FAILED}" with Retry`);
+  else {
+    const box = await phone.locator("#retry").boundingBox();
+    if (!box || box.height < 44) fail(`${name} phone: Retry should be at least 44px tall, is ${box?.height}`);
+    await phone.screenshot({ path: join(out, `${name}-phone-failed.png`) });
+    await phone.unroute("**/levels/index.json");
+    await phone.tap("#retry");
+    if (!(await phone.waitForFunction(() => !document.querySelector(".play").hidden && document.querySelector(".cell") && document.querySelector("#load")?.hidden !== false, null, { timeout: 4000 }).catch(() => null)))
+      fail(`${name} phone: Retry should load Afterstep once the network is back`);
+    else if ((await phone.textContent("#level-title")) !== "Plates open doors") fail(`${name} phone: after Retry a newcomer should get the first lesson`);
+  }
+  if (phoneLines > phoneExpected || phoneLines === 0) fail(`${name} phone: expected the browser's network line for the blocked index, got ${phoneLines} of ${phoneExpected}`);
+  await phone.close();
+}
+
 const browser = await chromium.launch({ executablePath: browserPath });
 try {
   await routes(browser, "routes", { width: 1280, height: 900 });
+  await levelLoad(browser, "level-load", { width: 1280, height: 900 });
   await likesFlow(browser);
   await likeTabs(browser);
   await keyboardStart(browser, "desktop-dark", { width: 1280, height: 900 });

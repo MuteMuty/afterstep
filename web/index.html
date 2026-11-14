@@ -72,6 +72,13 @@
           <h1 id="archive-title">Past puzzles</h1>
           <ol id="archive-list"></ol>
         </section>
+
+        <!-- Loading (lab#40): shown only when a puzzle is slow to load or doesn't load. -->
+        <div id="load" class="load" hidden>
+          <p id="load-text" class="load-text"></p>
+          <button id="retry" class="primary" hidden>Retry</button>
+        </div>
+        <p id="load-live" class="sr-only" role="status"></p>
       </main>
     </div>
 
