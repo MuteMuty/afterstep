@@ -207,3 +207,128 @@ test("the label names the game and the count", () => {
   assert.equal(likeLabel(1), "Like Afterstep, 1 like");
   assert.equal(likeLabel(0), "Like Afterstep, 0 likes");
 });
+
+// ── Open tabs (lab#37) ──────────────────────────────────────────────────────
+// Two pages share one storage, as two tabs share localStorage. The page calls
+// sync() on a `storage` event for LIKE_KEY; sync() re-reads the stored receipt.
+const RECEIPT_B = "fedcba9876543210fedcba9876543210";
+
+test("a like in another tab shows here, +1, and unliking here sends that tab's receipt", async () => {
+  const storage = memoryStorage();
+  const a = setup({ storage, answers: [counts(12), () => json(200, { receipt: RECEIPT, total: 13, week: 13 })] });
+  const b = setup({ storage, answers: [counts(12), () => json(200, { ok: true, total: 12, week: 12 })] });
+  await a.likes.load();
+  await b.likes.load();
+  await a.likes.toggle();
+  b.likes.sync();
+  assert.deepEqual(b.likes.state, { ready: true, liked: true, count: 13, busy: false, note: "" });
+  assert.equal(b.fetch.calls.length, 1, "nothing is asked of the API");
+  await b.likes.toggle();
+  assert.equal(b.fetch.calls[1].method, "DELETE");
+  assert.deepEqual(JSON.parse(b.fetch.calls[1].body), { receipt: RECEIPT });
+  a.likes.sync();
+  assert.deepEqual(a.likes.state, { ready: true, liked: false, count: 12, busy: false, note: "" });
+});
+
+test("sync changes nothing when the liked state is the same, and never re-renders for it", async () => {
+  const storage = memoryStorage({ [LIKE_KEY]: JSON.stringify({ liked: true, receipt: RECEIPT }) });
+  const { likes, seen, fetch } = setup({ storage, answers: [counts(7), () => json(200, { ok: true, total: 6, week: 0 })] });
+  await likes.load();
+  const renders = seen.length;
+  likes.sync();
+  assert.equal(seen.length, renders);
+  // Another tab swapped the receipt (unliked and liked again): this page unlikes with the new one.
+  storage.setItem(LIKE_KEY, JSON.stringify({ liked: true, receipt: RECEIPT_B }));
+  likes.sync();
+  assert.deepEqual({ liked: likes.state.liked, count: likes.state.count }, { liked: true, count: 7 });
+  assert.equal(seen.length, renders);
+  await likes.toggle();
+  assert.deepEqual(JSON.parse(fetch.calls[1].body), { receipt: RECEIPT_B });
+});
+
+test("a sync clears a leftover note; stored junk from another tab reads as unliked", async () => {
+  const storage = memoryStorage();
+  const { likes } = setup({ storage, answers: [counts(3), () => json(429, {})] });
+  await likes.load();
+  await likes.toggle();
+  assert.ok(likes.state.note);
+  storage.setItem(LIKE_KEY, JSON.stringify({ liked: true, receipt: RECEIPT }));
+  likes.sync();
+  assert.deepEqual({ liked: likes.state.liked, count: likes.state.count, note: likes.state.note }, { liked: true, count: 4, note: "" });
+  storage.setItem(LIKE_KEY, "junk");
+  likes.sync();
+  assert.deepEqual({ liked: likes.state.liked, count: likes.state.count }, { liked: false, count: 3 });
+});
+
+test("a sync before the counts load stays hidden, and the load then shows the stored state", async () => {
+  const storage = memoryStorage();
+  const { likes, seen } = setup({ storage, answers: [counts(5)] });
+  storage.setItem(LIKE_KEY, JSON.stringify({ liked: true, receipt: RECEIPT }));
+  likes.sync();
+  assert.equal(seen.length, 0);
+  await likes.load();
+  assert.deepEqual({ ready: likes.state.ready, liked: likes.state.liked, count: likes.state.count }, { ready: true, liked: true, count: 5 });
+});
+
+test("a like in flight here isn't disturbed by another tab's; a 409 then shows that tab's like, counted once", async () => {
+  let resolve;
+  const storage = memoryStorage();
+  const { likes, seen } = setup({ storage, answers: [counts(12), () => new Promise((r) => (resolve = r))] });
+  await likes.load();
+  const done = likes.toggle();
+  const during = seen.length;
+  // The other tab's like lands while this one is on its way.
+  storage.setItem(LIKE_KEY, JSON.stringify({ liked: true, receipt: RECEIPT_B }));
+  likes.sync();
+  assert.equal(seen.length, during, "no re-render while the press is in flight");
+  assert.deepEqual({ liked: likes.state.liked, count: likes.state.count, busy: likes.state.busy }, { liked: true, count: 13, busy: true });
+  resolve(json(409, { error: "This network already liked it today.", total: 13, week: 1 }));
+  await done;
+  assert.deepEqual(likes.state, { ready: true, liked: true, count: 13, busy: false, note: "" });
+  assert.ok(seen.slice(1).every((s) => s.liked), "never flickers back to unliked after the press");
+  assert.deepEqual(JSON.parse(storage.getItem(LIKE_KEY)), { liked: true, receipt: RECEIPT_B }, "the other tab's receipt is kept");
+});
+
+test("after a missed sync, a failure with no count settles one step from where it was", async () => {
+  let resolve;
+  const storage = memoryStorage();
+  const { likes, fetch } = setup({ storage, answers: [counts(12), () => new Promise((r) => (resolve = r)), () => json(200, { ok: true, total: 12, week: 0 })] });
+  await likes.load();
+  const done = likes.toggle();
+  storage.setItem(LIKE_KEY, JSON.stringify({ liked: true, receipt: RECEIPT_B }));
+  likes.sync();
+  resolve(json(503, { error: "Likes are resting right now." }));
+  await done;
+  assert.deepEqual(likes.state, { ready: true, liked: true, count: 13, busy: false, note: "" });
+  await likes.toggle();
+  assert.deepEqual(JSON.parse(fetch.calls[2].body), { receipt: RECEIPT_B });
+});
+
+test("an unlike in flight here settles on its own when another tab unlikes first", async () => {
+  let resolve;
+  const storage = memoryStorage({ [LIKE_KEY]: JSON.stringify({ liked: true, receipt: RECEIPT }) });
+  const { likes, seen } = setup({ storage, answers: [counts(9), () => new Promise((r) => (resolve = r))] });
+  await likes.load();
+  const done = likes.toggle();
+  storage.removeItem(LIKE_KEY);
+  likes.sync();
+  assert.deepEqual({ liked: likes.state.liked, count: likes.state.count, busy: likes.state.busy }, { liked: false, count: 8, busy: true });
+  resolve(json(404, { error: "That like wasn't found.", total: 8, week: 0 }));
+  await done;
+  assert.deepEqual(likes.state, { ready: true, liked: false, count: 8, busy: false, note: "" });
+  assert.ok(seen.slice(1).every((s) => !s.liked));
+});
+
+test("a sync during a press that then goes through keeps this page's result", async () => {
+  let resolve;
+  const storage = memoryStorage();
+  const { likes } = setup({ storage, answers: [counts(12), () => new Promise((r) => (resolve = r))] });
+  await likes.load();
+  const done = likes.toggle();
+  storage.setItem(LIKE_KEY, "junk"); // some other write to the key while this one is on its way
+  likes.sync();
+  resolve(json(200, { receipt: RECEIPT, total: 13, week: 1 }));
+  await done;
+  assert.deepEqual(likes.state, { ready: true, liked: true, count: 13, busy: false, note: "" });
+  assert.deepEqual(JSON.parse(storage.getItem(LIKE_KEY)), { liked: true, receipt: RECEIPT });
+});
