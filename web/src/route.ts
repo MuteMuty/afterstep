@@ -1,5 +1,5 @@
 // Afterstep's screens as hash routes (lab#8), kept free of the DOM so
-// tests/route.test.mjs can run them in Node. Today's puzzle lives at the bare
+// tests/route.test.ts can run them in Node. Today's puzzle lives at the bare
 // URL (old links keep working); everything else gets a hash:
 //   #/learn/2              lesson 2 (lessons count from 1 in the URL)
 //   #/past                 Past puzzles

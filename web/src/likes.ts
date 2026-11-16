@@ -1,4 +1,4 @@
-// The like button's logic (lab#17), kept free of the DOM so tests/likes.test.mjs
+// The like button's logic (lab#17), kept free of the DOM so tests/likes.test.ts
 // can run it in Node. Counts come from the lab hub's like API. This browser keeps
 // only its own receipt (to take the like back on any later day): no cookies, and
 // nothing about the visitor is sent. Every open tab shares that receipt, and the

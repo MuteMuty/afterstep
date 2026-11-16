@@ -51,7 +51,7 @@
     --ghost: #2f6fcc;
     --exit: #0f2a55;
     /* Deep enough for letters to reach 4.5:1 on a tile, and a tile's colour on them
-       (tests/contrast.test.mjs). */
+       (tests/contrast.test.ts). */
     --l0: #c0402b;
     --l1: #357a19;
     --l2: #8a4fd0;

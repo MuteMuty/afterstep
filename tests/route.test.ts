@@ -68,7 +68,7 @@ test("routeHash writes each route's canonical hash, today's as none", () => {
 });
 
 test("routeHash and parseRoute round-trip", () => {
-  const routes = [{ kind: "today" }, { kind: "past" }, { kind: "learn", step: 2 }, { kind: "puzzle", date: "2026-11-11" }];
+  const routes: Parameters<typeof routeHash>[0][] = [{ kind: "today" }, { kind: "past" }, { kind: "learn", step: 2 }, { kind: "puzzle", date: "2026-11-11" }];
   for (const r of routes) assert.deepEqual(parseRoute(routeHash(r), ctx), r);
 });
 

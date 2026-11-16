@@ -2,36 +2,44 @@
 // fetch and a fake localStorage. Run: node --test tests/
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createLikes, LIKE_KEY, likeLabel } from "../web/src/likes.ts";
+import { createLikes, LIKE_KEY, likeLabel, type LikeState } from "../web/src/likes.ts";
 
 const API = "https://lab.brightloopapps.com";
 const RECEIPT = "0123456789abcdef0123456789abcdef";
 
-function memoryStorage(init = {}) {
+function memoryStorage(init: Record<string, string> = {}) {
   const m = new Map(Object.entries(init));
-  return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: (k) => m.delete(k), m };
+  return {
+    getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => { m.set(k, String(v)); },
+    removeItem: (k: string) => { m.delete(k); }, m,
+  };
 }
 const brokenStorage = () => ({ getItem() { throw new Error("denied"); }, setItem() { throw new Error("denied"); }, removeItem() { throw new Error("denied"); } });
 
-const json = (status, body) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+
+type Answer = (url: string, init: RequestInit) => Response | Promise<Response>;
+type Call = { url: string; method: string; body: unknown; credentials: unknown; init: RequestInit };
 
 /** A fake fetch that answers from a queue of handlers and records every call. */
-function fakeFetch(...answers) {
-  const calls = [];
-  const f = async (url, init = {}) => {
+function fakeFetch(...answers: Answer[]) {
+  const calls: Call[] = [];
+  const f = async (url: string | URL | Request, init: RequestInit = {}) => {
     calls.push({ url: String(url), method: init.method ?? "GET", body: init.body, credentials: init.credentials, init });
     const a = answers.shift();
     if (!a) throw new Error(`unexpected request ${init.method ?? "GET"} ${url}`);
-    return a(url, init);
+    return a(String(url), init);
   };
-  f.calls = calls;
-  return f;
+  return Object.assign(f, { calls });
 }
-const counts = (total, week = total) => () => json(200, { afterstep: { total, week }, inkchime: { total: 3, week: 1 } });
+const counts = (total: number, week = total) => () => json(200, { afterstep: { total, week }, inkchime: { total: 3, week: 1 } });
 
-function setup({ storage = memoryStorage(), answers = [], timeoutMs } = {}) {
+function setup(
+  { storage = memoryStorage(), answers = [], timeoutMs }:
+    { storage?: ReturnType<typeof memoryStorage> | ReturnType<typeof brokenStorage>; answers?: Answer[]; timeoutMs?: number } = {},
+) {
   const fetch = fakeFetch(...answers);
-  const seen = [];
+  const seen: LikeState[] = [];
   const likes = createLikes({ fetch, storage, api: API, project: "afterstep", timeoutMs, onChange: (s) => seen.push({ ...s }) });
   return { likes, fetch, storage, seen };
 }
@@ -65,15 +73,15 @@ test("load stays hidden on 204 (likes resting), 503, a network error, junk or a 
 });
 
 test("load gives up on a slow API and stays hidden", async () => {
-  const slow = (_url, init) => new Promise((_, reject) => init.signal.addEventListener("abort", () => reject(init.signal.reason)));
+  const slow: Answer = (_url, init) => new Promise((_, reject) => init.signal!.addEventListener("abort", () => reject(init.signal!.reason)));
   const { likes } = setup({ answers: [slow], timeoutMs: 20 });
   await likes.load();
   assert.equal(likes.state.ready, false);
 });
 
 test("liking is optimistic, stores the receipt and settles on the server's count", async () => {
-  let resolve;
-  const pending = new Promise((r) => (resolve = r));
+  let resolve!: (r: Response) => void;
+  const pending = new Promise<Response>((r) => (resolve = r));
   const { likes, fetch, storage, seen } = setup({ answers: [counts(12), () => pending] });
   await likes.load();
   const done = likes.toggle();
@@ -84,7 +92,7 @@ test("liking is optimistic, stores the receipt and settles on the server's count
   resolve(json(200, { receipt: RECEIPT, total: 15, week: 4 }));
   await done;
   assert.deepEqual(likes.state, { ready: true, liked: true, count: 15, busy: false, note: "" });
-  assert.deepEqual(JSON.parse(storage.getItem(LIKE_KEY)), { liked: true, receipt: RECEIPT });
+  assert.deepEqual(JSON.parse(storage.getItem(LIKE_KEY)!), { liked: true, receipt: RECEIPT });
   assert.ok(seen.length >= 2);
 });
 
@@ -104,8 +112,8 @@ test("a like survives a reload, and unliking sends the stored receipt, even on a
   const del = again.fetch.calls[1];
   assert.equal(del.method, "DELETE");
   assert.equal(del.url, `${API}/api/likes/afterstep`);
-  assert.equal(del.init.headers["content-type"], "application/json");
-  assert.deepEqual(JSON.parse(del.body), { receipt: RECEIPT });
+  assert.equal((del.init.headers as Record<string, string>)["content-type"], "application/json");
+  assert.deepEqual(JSON.parse(String(del.body)), { receipt: RECEIPT });
   assert.equal(storage.getItem(LIKE_KEY), null);
   assert.deepEqual(again.likes.state, { ready: true, liked: false, count: 12, busy: false, note: "" });
 });
@@ -142,11 +150,11 @@ test("429 rolls back a like or an unlike and asks to try again in a minute", asy
   await unlike.likes.toggle();
   assert.deepEqual({ liked: unlike.likes.state.liked, count: unlike.likes.state.count }, { liked: true, count: 12 });
   assert.match(unlike.likes.state.note, /in a minute/);
-  assert.deepEqual(JSON.parse(storage.getItem(LIKE_KEY)), { liked: true, receipt: RECEIPT }, "the receipt is kept");
+  assert.deepEqual(JSON.parse(storage.getItem(LIKE_KEY)!), { liked: true, receipt: RECEIPT }, "the receipt is kept");
 });
 
 test("a failed like (503, offline, slow) rolls back and keeps the last known count", async () => {
-  const slow = (_url, init) => new Promise((_, reject) => init.signal.addEventListener("abort", () => reject(init.signal.reason)));
+  const slow: Answer = (_url, init) => new Promise((_, reject) => init.signal!.addEventListener("abort", () => reject(init.signal!.reason)));
   for (const fail of [() => json(503, { error: "Likes are resting right now." }), () => { throw new TypeError("Failed to fetch"); }, slow]) {
     const { likes } = setup({ answers: [counts(12), fail], timeoutMs: 20 });
     await likes.load();
@@ -157,8 +165,8 @@ test("a failed like (503, offline, slow) rolls back and keeps the last known cou
 });
 
 test("a press while one is in flight does nothing; the next press clears the note", async () => {
-  let resolve;
-  const { likes, fetch } = setup({ answers: [counts(1), () => json(429, {}), () => new Promise((r) => (resolve = r))] });
+  let resolve!: (r: Response) => void;
+  const { likes, fetch } = setup({ answers: [counts(1), () => json(429, {}), () => new Promise<Response>((r) => (resolve = r))] });
   await likes.load();
   await likes.toggle();
   assert.ok(likes.state.note);
@@ -190,7 +198,7 @@ test("storage that can't be used still likes and unlikes within this page", asyn
   await likes.toggle();
   assert.equal(likes.state.liked, true);
   await likes.toggle();
-  assert.deepEqual(JSON.parse(fetch.calls[2].body), { receipt: RECEIPT });
+  assert.deepEqual(JSON.parse(String(fetch.calls[2].body)), { receipt: RECEIPT });
   assert.equal(likes.state.liked, false);
 });
 
@@ -225,7 +233,7 @@ test("a like in another tab shows here, +1, and unliking here sends that tab's r
   assert.equal(b.fetch.calls.length, 1, "nothing is asked of the API");
   await b.likes.toggle();
   assert.equal(b.fetch.calls[1].method, "DELETE");
-  assert.deepEqual(JSON.parse(b.fetch.calls[1].body), { receipt: RECEIPT });
+  assert.deepEqual(JSON.parse(String(b.fetch.calls[1].body)), { receipt: RECEIPT });
   a.likes.sync();
   assert.deepEqual(a.likes.state, { ready: true, liked: false, count: 12, busy: false, note: "" });
 });
@@ -243,7 +251,7 @@ test("sync changes nothing when the liked state is the same, and never re-render
   assert.deepEqual({ liked: likes.state.liked, count: likes.state.count }, { liked: true, count: 7 });
   assert.equal(seen.length, renders);
   await likes.toggle();
-  assert.deepEqual(JSON.parse(fetch.calls[1].body), { receipt: RECEIPT_B });
+  assert.deepEqual(JSON.parse(String(fetch.calls[1].body)), { receipt: RECEIPT_B });
 });
 
 test("a sync clears a leftover note; stored junk from another tab reads as unliked", async () => {
@@ -271,9 +279,9 @@ test("a sync before the counts load stays hidden, and the load then shows the st
 });
 
 test("a like in flight here isn't disturbed by another tab's; a 409 then shows that tab's like, counted once", async () => {
-  let resolve;
+  let resolve!: (r: Response) => void;
   const storage = memoryStorage();
-  const { likes, seen } = setup({ storage, answers: [counts(12), () => new Promise((r) => (resolve = r))] });
+  const { likes, seen } = setup({ storage, answers: [counts(12), () => new Promise<Response>((r) => (resolve = r))] });
   await likes.load();
   const done = likes.toggle();
   const during = seen.length;
@@ -286,13 +294,13 @@ test("a like in flight here isn't disturbed by another tab's; a 409 then shows t
   await done;
   assert.deepEqual(likes.state, { ready: true, liked: true, count: 13, busy: false, note: "" });
   assert.ok(seen.slice(1).every((s) => s.liked), "never flickers back to unliked after the press");
-  assert.deepEqual(JSON.parse(storage.getItem(LIKE_KEY)), { liked: true, receipt: RECEIPT_B }, "the other tab's receipt is kept");
+  assert.deepEqual(JSON.parse(storage.getItem(LIKE_KEY)!), { liked: true, receipt: RECEIPT_B }, "the other tab's receipt is kept");
 });
 
 test("after a missed sync, a failure with no count settles one step from where it was", async () => {
-  let resolve;
+  let resolve!: (r: Response) => void;
   const storage = memoryStorage();
-  const { likes, fetch } = setup({ storage, answers: [counts(12), () => new Promise((r) => (resolve = r)), () => json(200, { ok: true, total: 12, week: 0 })] });
+  const { likes, fetch } = setup({ storage, answers: [counts(12), () => new Promise<Response>((r) => (resolve = r)), () => json(200, { ok: true, total: 12, week: 0 })] });
   await likes.load();
   const done = likes.toggle();
   storage.setItem(LIKE_KEY, JSON.stringify({ liked: true, receipt: RECEIPT_B }));
@@ -301,13 +309,13 @@ test("after a missed sync, a failure with no count settles one step from where i
   await done;
   assert.deepEqual(likes.state, { ready: true, liked: true, count: 13, busy: false, note: "" });
   await likes.toggle();
-  assert.deepEqual(JSON.parse(fetch.calls[2].body), { receipt: RECEIPT_B });
+  assert.deepEqual(JSON.parse(String(fetch.calls[2].body)), { receipt: RECEIPT_B });
 });
 
 test("an unlike in flight here settles on its own when another tab unlikes first", async () => {
-  let resolve;
+  let resolve!: (r: Response) => void;
   const storage = memoryStorage({ [LIKE_KEY]: JSON.stringify({ liked: true, receipt: RECEIPT }) });
-  const { likes, seen } = setup({ storage, answers: [counts(9), () => new Promise((r) => (resolve = r))] });
+  const { likes, seen } = setup({ storage, answers: [counts(9), () => new Promise<Response>((r) => (resolve = r))] });
   await likes.load();
   const done = likes.toggle();
   storage.removeItem(LIKE_KEY);
@@ -320,9 +328,9 @@ test("an unlike in flight here settles on its own when another tab unlikes first
 });
 
 test("a sync during a press that then goes through keeps this page's result", async () => {
-  let resolve;
+  let resolve!: (r: Response) => void;
   const storage = memoryStorage();
-  const { likes } = setup({ storage, answers: [counts(12), () => new Promise((r) => (resolve = r))] });
+  const { likes } = setup({ storage, answers: [counts(12), () => new Promise<Response>((r) => (resolve = r))] });
   await likes.load();
   const done = likes.toggle();
   storage.setItem(LIKE_KEY, "junk"); // some other write to the key while this one is on its way
@@ -330,5 +338,5 @@ test("a sync during a press that then goes through keeps this page's result", as
   resolve(json(200, { receipt: RECEIPT, total: 13, week: 1 }));
   await done;
   assert.deepEqual(likes.state, { ready: true, liked: true, count: 13, busy: false, note: "" });
-  assert.deepEqual(JSON.parse(storage.getItem(LIKE_KEY)), { liked: true, receipt: RECEIPT });
+  assert.deepEqual(JSON.parse(storage.getItem(LIKE_KEY)!), { liked: true, receipt: RECEIPT });
 });
