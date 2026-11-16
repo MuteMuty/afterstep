@@ -1,4 +1,4 @@
-// Loading levels (lab#40), kept free of the DOM so tests/levels.test.mjs can run
+// Loading levels (lab#40), kept free of the DOM so tests/levels.test.ts can run
 // it in Node. A request that fails (offline, a 404, a reply that isn't a level)
 // gives null instead of throwing, and main.ts shows a message with Retry.
 

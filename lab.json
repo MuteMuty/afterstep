@@ -4,10 +4,10 @@
   "worker": "afterstep",
   "commands": {
     "install": "npm ci",
-    "test": "PATH=$HOME/.cargo/bin:$PATH cargo test --release --manifest-path engine/Cargo.toml --features gen && node --test tests/*.test.mjs",
+    "test": "PATH=$HOME/.cargo/bin:$PATH cargo test --release --manifest-path engine/Cargo.toml --features gen && npm run typecheck && node --test tests/*.test.ts",
     "build": "npm run build",
     "serve": "npx vite preview web --port {port} --strictPort",
-    "playtest": "node tests/playtest.mjs",
+    "playtest": "node tests/playtest.ts",
     "deploy": "npx wrangler deploy",
     "maintenance": "sh scripts/maintenance.sh"
   },

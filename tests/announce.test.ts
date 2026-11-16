@@ -9,7 +9,7 @@ import { boardState, boardNews } from "../web/src/announce.ts";
 //   . B b b
 const tiles = "S.Aa.Bbb".split("");
 const S = 0, A = 2, a = 3, B = 5, b1 = 6, b2 = 7;
-const bit = (l) => 1 << (l.charCodeAt(0) - 65);
+const bit = (l: string) => 1 << (l.charCodeAt(0) - 65);
 const NOBODY = -1;
 
 test("boardState reads who stands on each plate, which doors are open, and whether the echo is out", () => {

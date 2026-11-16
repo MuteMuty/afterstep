@@ -8,22 +8,22 @@ import { readFileSync } from "node:fs";
 const css = readFileSync(new URL("../web/src/style.css", import.meta.url), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
 
 /** The declarations of the first rule whose selector is exactly `selector`, as { prop: value }. */
-function rule(source, selector) {
+function rule(source: string, selector: string): Record<string, string> {
   const re = new RegExp(`(^|[}\\s])${selector.replace(/[.*+?^${}()|[\]\\:]/g, "\\$&")}\\s*\\{([^}]*)\\}`);
   const m = source.match(re);
   assert.ok(m, `no rule for ${selector}`);
   return Object.fromEntries(
-    m[2].split(";").map((d) => d.trim()).filter(Boolean).map((d) => {
+    m![2]!.split(";").map((d) => d.trim()).filter(Boolean).map((d) => {
       const i = d.indexOf(":");
       return [d.slice(0, i).trim(), d.slice(i + 1).trim()];
     }),
   );
 }
 
-const light = css.match(/@media \(prefers-color-scheme: light\)\s*\{([\s\S]*?\}\s*)\}/)[1];
+const light = css.match(/@media \(prefers-color-scheme: light\)\s*\{([\s\S]*?\}\s*)\}/)![1]!;
 const themes = { dark: rule(css, ":root"), light: { ...rule(css, ":root"), ...rule(light, ":root") } };
 
-function lum(hex) {
+function lum(hex: string): number {
   assert.match(hex, /^#[0-9a-f]{6}$/i, `expected a #rrggbb colour, got ${hex}`);
   const n = parseInt(hex.slice(1), 16);
   const [r, g, b] = [16, 8, 0].map((s) => {
@@ -32,13 +32,13 @@ function lum(hex) {
   });
   return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }
-function contrast(a, b) {
+function contrast(a: string, b: string): number {
   const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
   return (hi + 0.05) / (lo + 0.05);
 }
 
 /** Resolve a value like var(--l2) or var(--c) (bound to the letter's colour) in a theme. */
-function resolve(value, theme, letterColour) {
+function resolve(value: string, theme: Record<string, string>, letterColour: string): string {
   const m = value.match(/^var\((--[\w-]+)\)$/);
   if (!m) return value;
   if (m[1] === "--c") return letterColour;

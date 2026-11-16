@@ -1,5 +1,5 @@
 // How a daily's result is scored, saved and written out, kept free of the DOM
-// so tests/score.test.mjs can run it in Node. Each hint counts as one move,
+// so tests/score.test.ts can run it in Node. Each hint counts as one move,
 // both in the score and against par, and a solve with any hint is never
 // perfect: help was needed (lab#25).
 //

@@ -14,7 +14,7 @@ const aDaily = JSON.parse(readFileSync(join(repo, "levels/daily", daily[0]), "ut
 const aLesson = JSON.parse(readFileSync(join(repo, "levels/tutorial", readdirSync(join(repo, "levels/tutorial")).filter((f) => f.endsWith(".json")).sort()[0]), "utf8"));
 
 /** A fake fetch answering every request with `status` and `body` (a string, sent as is). */
-const answer = (status, body) => async () => new Response(body, { status, headers: { "content-type": "application/json" } });
+const answer = (status: number, body: string) => async () => new Response(body, { status, headers: { "content-type": "application/json" } });
 
 test("isLevel takes the real level files", () => {
   for (const f of daily) assert.ok(isLevel(JSON.parse(readFileSync(join(repo, "levels/daily", f), "utf8"))), f);
@@ -46,8 +46,8 @@ test("isIndex takes the index the build writes, and turns away one without its l
 });
 
 test("fetchChecked gives the level when the request works", async () => {
-  const seen = [];
-  const fetch = async (url) => { seen.push(url); return new Response(JSON.stringify(aDaily), { status: 200 }); };
+  const seen: string[] = [];
+  const fetch = async (url: string) => { seen.push(url); return new Response(JSON.stringify(aDaily), { status: 200 }); };
   assert.deepEqual(await fetchChecked(fetch, "/levels/daily/x.json", isLevel), aDaily);
   assert.deepEqual(seen, ["/levels/daily/x.json"]);
 });

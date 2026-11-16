@@ -4,14 +4,16 @@
   "type": "module",
   "scripts": {
     "wasm": "sh scripts/build-wasm.sh",
-    "levels": "node scripts/build-levels.mjs",
+    "levels": "node scripts/build-levels.ts",
     "dev": "npm run wasm && npm run levels && vite web",
     "build": "npm run wasm && npm run levels && tsc -p web && vite build web",
     "preview": "vite preview web",
     "deploy": "npm run build && wrangler deploy",
-    "playtest": "node tests/playtest.mjs"
+    "typecheck": "tsc -p web && tsc -p . && tsc -p tests",
+    "playtest": "node tests/playtest.ts"
   },
   "devDependencies": {
+    "@types/node": "^22.20.5",
     "playwright": "^1.52.0",
     "typescript": "5.8.3",
     "vite": "6.3.5",

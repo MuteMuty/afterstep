@@ -60,7 +60,7 @@
 // d-pad and Hint during a slow load leave the old board alone (solved or not)
 // and nudge nothing; a slow load says so, a quick one shows no message.
 //
-// Usage: node tests/playtest.mjs <baseUrl>
+// Usage: node tests/playtest.ts <baseUrl>
 // Env:   PLAYTEST_BROWSER  Chromium-based browser executable (default: Brave)
 //        PLAYTEST_OUT      screenshot folder (default: ./playtest-out)
 // Exit:  0 = pass, 1 = fail (reasons printed)
@@ -71,7 +71,7 @@ import { join, dirname } from "node:path";
 
 const base = process.argv[2];
 if (!base) {
-  console.error("usage: node tests/playtest.mjs <baseUrl>");
+  console.error("usage: node tests/playtest.ts <baseUrl>");
   process.exit(2);
 }
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -101,20 +101,22 @@ const nudges = await (async () => {
   return out;
 })();
 
+declare global { interface Window { [hook: `__${string}`]: any } } // the playtest's own hooks: window.__copied, __seen, …
+
 const failures = [];
 const fail = (msg) => failures.push(msg);
 const dialogOpens = (page) => page.waitForSelector("dialog[open]", { timeout: 2500 }).then(() => true, () => false);
 
 // The solved line below the board: its text and Next label, or null when hidden.
 const solvedLine = (page) => page.evaluate(() => {
-  const t = document.querySelector("#solved-text"), a = document.querySelector("#solved-actions");
+  const t = document.querySelector<HTMLElement>("#solved-text"), a = document.querySelector<HTMLElement>("#solved-actions");
   if (!t || !a) return null;
   if (a.hidden || !a.offsetParent) return t.textContent ? { text: t.textContent, actions: false } : null;
-  return { text: t.textContent, actions: true, share: !document.querySelector("#solved-share").hidden, next: document.querySelector("#solved-next").textContent };
+  return { text: t.textContent, actions: true, share: !document.querySelector<HTMLElement>("#solved-share").hidden, next: document.querySelector<HTMLElement>("#solved-next").textContent };
 });
 async function expectSolved(page, name, label, text, next, share = true) {
   // The line shows when the dialog's close event runs, a task after it closes.
-  await page.waitForFunction(() => document.querySelector("#solved-actions")?.offsetParent, null, { timeout: 1000 }).catch(() => {});
+  await page.waitForFunction(() => document.querySelector<HTMLElement>("#solved-actions")?.offsetParent, null, { timeout: 1000 }).catch(() => {});
   const got = await solvedLine(page);
   if (!got || !got.actions) return fail(`${name}: ${label}: the solved line should show with its buttons, got ${JSON.stringify(got)}`);
   if (got.text !== text) fail(`${name}: ${label}: solved line should say "${text}", says "${got.text}"`);
@@ -133,8 +135,8 @@ async function expectCue(page, name, label, key) {
   const m0 = await moves();
   await page.keyboard.press(key);
   const cue = await page.evaluate(() => {
-    const s = document.querySelector("#solved");
-    const anim = [s, ...s.querySelectorAll("*")].map((e) => getComputedStyle(e).animationName).filter((n) => n !== "none");
+    const s = document.querySelector<HTMLElement>("#solved");
+    const anim = [s, ...s.querySelectorAll<HTMLElement>("*")].map((e) => getComputedStyle(e).animationName).filter((n) => n !== "none");
     return { bumped: s.classList.contains("bump"), anim };
   });
   if ((await moves()) !== m0) fail(`${name}: ${label}: ${key} on a solved board changed the moves`);
@@ -144,14 +146,14 @@ async function expectCue(page, name, label, key) {
 async function openPast(page, id) {
   await page.click('[data-nav="archive"]');
   await page.waitForSelector("#archive:not([hidden])");
-  await page.evaluate((id) => [...document.querySelectorAll("#archive-list button")].find((b) => b.textContent.startsWith(`Puzzle ${id} `)).click(), id);
-  await page.waitForFunction((id) => !document.querySelector(".play").hidden && document.querySelector("#level-title").textContent === `Puzzle ${id}`, id);
+  await page.evaluate((id) => [...document.querySelectorAll<HTMLElement>("#archive-list button")].find((b) => b.textContent.startsWith(`Puzzle ${id} `)).click(), id);
+  await page.waitForFunction((id) => !document.querySelector<HTMLElement>(".play").hidden && document.querySelector<HTMLElement>("#level-title").textContent === `Puzzle ${id}`, id);
 }
 // Past puzzles' "solved in ..." for a puzzle ("" if unsolved), opening the list first.
 async function archiveDone(page, id) {
   await page.click('[data-nav="archive"]');
   await page.waitForSelector("#archive:not([hidden])");
-  return page.evaluate((id) => [...document.querySelectorAll("#archive-list button")].find((b) => b.textContent.startsWith(`Puzzle ${id} `))?.querySelector(".done")?.textContent ?? "", id);
+  return page.evaluate((id) => [...document.querySelectorAll<HTMLElement>("#archive-list button")].find((b) => b.textContent.startsWith(`Puzzle ${id} `))?.querySelector<HTMLElement>(".done")?.textContent ?? "", id);
 }
 const stubClipboard = (page) => page.evaluate(() => {
   window.__copied = "";
@@ -161,7 +163,7 @@ const stubClipboard = (page) => page.evaluate(() => {
 // Page height and footer position, to compare during play with solved.
 const pageBox = (page) => page.evaluate(() => ({
   height: document.documentElement.scrollHeight,
-  footer: Math.round(document.querySelector(".foot").getBoundingClientRect().top + window.scrollY),
+  footer: Math.round(document.querySelector<HTMLElement>(".foot").getBoundingClientRect().top + window.scrollY),
 }));
 function expectSameBox(name, label, playing, solved) {
   if (solved.height > playing.height || solved.footer !== playing.footer)
@@ -327,7 +329,7 @@ async function keyboardStart(browser, name, viewport) {
   for (let i = 0; i < 6; i++) {
     await page.keyboard.press("Tab");
     seen.push(await page.evaluate(() => {
-      const el = document.activeElement;
+      const el = document.activeElement as HTMLElement;
       return el.id || el.dataset.nav || (el.classList.contains("brand") ? "brand" : el.tagName.toLowerCase());
     }));
   }
@@ -376,7 +378,7 @@ async function keyboardStart(browser, name, viewport) {
 // on a touch phone it's hidden.
 async function keysHint(browser, name) {
   const lines = (page) => page.evaluate(() => {
-    const k = document.querySelector(".keys"), rows = new Map();
+    const k = document.querySelector<HTMLElement>(".keys"), rows = new Map();
     const walk = document.createTreeWalker(k, NodeFilter.SHOW_TEXT);
     for (let n; (n = walk.nextNode());) for (let i = 0; i < n.length; i++) {
       const r = document.createRange();
@@ -422,8 +424,8 @@ async function keysHint(browser, name) {
   fine.on("pageerror", (e) => fail(`${name}: page error: ${e.message}`));
   await fine.goto(base, { waitUntil: "networkidle" }).catch((e) => fail(`${name}: could not load ${base}: ${e.message}`));
   await fine.waitForSelector(".cell", { timeout: 8000 }).catch(() => {});
-  const shown = () => fine.evaluate(() => ({ dpad: getComputedStyle(document.querySelector(".dpad")).display !== "none", keys: !!document.querySelector(".keys").offsetParent }));
-  const press = (pointerType) => fine.evaluate((pointerType) => document.querySelector("#board").dispatchEvent(new PointerEvent("pointerdown", { pointerType, bubbles: true })), pointerType);
+  const shown = () => fine.evaluate(() => ({ dpad: getComputedStyle(document.querySelector<HTMLElement>(".dpad")).display !== "none", keys: !!document.querySelector<HTMLElement>(".keys").offsetParent }));
+  const press = (pointerType) => fine.evaluate((pointerType) => document.querySelector<HTMLElement>("#board").dispatchEvent(new PointerEvent("pointerdown", { pointerType, bubbles: true })), pointerType);
   await press("mouse");
   let got = await shown();
   if (got.dpad || !got.keys) fail(`${name}: a mouse press should keep the keys hint and no d-pad (${JSON.stringify(got)})`);
@@ -448,20 +450,20 @@ async function touchControls(browser, name, viewport) {
   // The Hint button shares the controls row: one line, and the d-pad sits
   // exactly where it would without it (and stays put while a hint shows).
   const layout = () => page.evaluate(() => {
-    const c = document.querySelector(".controls");
+    const c = document.querySelector<HTMLElement>(".controls");
     return {
-      dpad: document.querySelector(".dpad").getBoundingClientRect().top + window.scrollY,
-      rows: new Set([...c.querySelectorAll("button")].map((b) => Math.round(b.getBoundingClientRect().top))).size,
+      dpad: document.querySelector<HTMLElement>(".dpad").getBoundingClientRect().top + window.scrollY,
+      rows: new Set([...c.querySelectorAll<HTMLElement>("button")].map((b) => Math.round(b.getBoundingClientRect().top))).size,
       overflow: c.scrollWidth > c.clientWidth,
     };
   });
-  const short = await page.evaluate(() => [...document.querySelectorAll(".top nav button, .controls button, .dpad button")]
+  const short = await page.evaluate(() => [...document.querySelectorAll<HTMLElement>(".top nav button, .controls button, .dpad button")]
     .filter((b) => b.offsetParent && b.getBoundingClientRect().height < 44).map((b) => `${b.textContent} (${b.getBoundingClientRect().height}px)`));
   if (short.length) fail(`${name}: touch targets under 44px tall: ${short.join(", ")}`);
   const withHint = await layout();
-  await page.evaluate(() => (document.querySelector("#hint").style.display = "none"));
+  await page.evaluate(() => (document.querySelector<HTMLElement>("#hint").style.display = "none"));
   const withoutHint = await layout();
-  await page.evaluate(() => (document.querySelector("#hint").style.display = ""));
+  await page.evaluate(() => (document.querySelector<HTMLElement>("#hint").style.display = ""));
   if (withHint.rows !== 1 || withHint.overflow) fail(`${name}: game controls should fit on one row (${withHint.rows} rows, overflow ${withHint.overflow})`);
   if (withHint.dpad !== withoutHint.dpad) fail(`${name}: Hint button moved the d-pad from ${withoutHint.dpad} to ${withHint.dpad}`);
 
@@ -474,7 +476,7 @@ async function touchControls(browser, name, viewport) {
     const got = await moves(), y1 = await page.evaluate(() => window.scrollY);
     if (got !== want) fail(`${name}: tapping ${sel} left moves at ${got}, wanted ${want}`);
     if (y1 !== y0) fail(`${name}: tapping ${sel} scrolled the page (${y0} -> ${y1})`);
-    const { id, ring } = await page.evaluate(() => ({ id: document.activeElement.id, ring: document.querySelector("#board").matches(":focus-visible") }));
+    const { id, ring } = await page.evaluate(() => ({ id: document.activeElement.id, ring: document.querySelector<HTMLElement>("#board").matches(":focus-visible") }));
     if (id !== "board") fail(`${name}: tapping ${sel} should hand focus back to the board, "${id}" has it`);
     if (ring) fail(`${name}: tapping ${sel} left a focus ring on the board`);
     if (kind === "nudge") {
@@ -494,12 +496,12 @@ async function touchControls(browser, name, viewport) {
 
   // Today's puzzle: its nudge fits on one line and leaves the d-pad where it was.
   await page.tap('[data-nav="today"]');
-  await page.waitForFunction(() => document.querySelector("#level-title").textContent.startsWith("Puzzle "));
+  await page.waitForFunction(() => document.querySelector<HTMLElement>("#level-title").textContent.startsWith("Puzzle "));
   const before = await layout();
   await page.tap("#hint");
   await page.waitForSelector("#hint-note:not([hidden])");
   const fit = await page.evaluate(() => {
-    const n = document.querySelector("#hint-note"), s = document.querySelector(".status");
+    const n = document.querySelector<HTMLElement>("#hint-note"), s = document.querySelector<HTMLElement>(".status");
     const r = n.getBoundingClientRect(), t = document.createRange();
     t.selectNodeContents(n);
     const text = t.getBoundingClientRect();
@@ -515,11 +517,11 @@ async function touchControls(browser, name, viewport) {
   // d-pad's place (which can't move anything now) and pushes nothing down.
   const box = () => page.evaluate(() => {
     const r = (s) => { const e = document.querySelector(s); if (!e.offsetParent) return null; const b = e.getBoundingClientRect(); return { top: b.top + window.scrollY, bottom: b.bottom + window.scrollY }; };
-    const dpad = document.querySelector(".dpad");
+    const dpad = document.querySelector<HTMLElement>(".dpad");
     return {
       solved: r("#solved-actions"), controls: r(".controls"), dpad: getComputedStyle(dpad).visibility === "visible" ? r(".dpad") : null, dpadPlace: r(".dpad"),
       status: r(".status-row"), text: r("#solved-text"), wide: document.documentElement.scrollWidth > window.innerWidth,
-      height: document.documentElement.scrollHeight, footer: Math.round(document.querySelector(".foot").getBoundingClientRect().top + window.scrollY),
+      height: document.documentElement.scrollHeight, footer: Math.round(document.querySelector<HTMLElement>(".foot").getBoundingClientRect().top + window.scrollY),
     };
   });
   await page.tap("#restart");
@@ -533,7 +535,7 @@ async function touchControls(browser, name, viewport) {
     return page.close();
   }
   await expectNoSolved(page, name, "while the win dialog is open");
-  await page.evaluate(() => document.querySelector("#win").close());
+  await page.evaluate(() => document.querySelector<HTMLDialogElement>("#win").close());
   await expectSolved(page, name, "after the dialog closed", `Solved in ${level.par} moves, par ${level.par}`, "Past puzzles");
   const done = await box();
   if (!done.solved) fail(`${name}: no solved line on the phone`);
@@ -573,7 +575,7 @@ async function hintFlow(browser, name, viewport) {
   const moves = async () => Number((await page.textContent("#moves")).match(/Moves\s*(\d+)/)?.[1]);
   const noteText = () => page.textContent("#hint-note");
   // The first H on a puzzle: a nudge sentence, no move marked, no move made.
-  const expectNudge = async (label, want) => {
+  const expectNudge = async (label, want?) => {
     const m0 = await moves();
     await page.keyboard.press("KeyH");
     const text = await noteText();
@@ -582,7 +584,7 @@ async function hintFlow(browser, name, viewport) {
     if (await page.isVisible("#board .hint-mark")) fail(`${name}: ${label}: a nudge should not mark a move`);
     if (await page.locator(".hinted").count()) fail(`${name}: ${label}: a nudge should not light up a button`);
     if ((await moves()) !== m0) fail(`${name}: ${label}: a nudge should not make a move`);
-    const live = await page.evaluate(() => document.querySelector("#hint-note").closest("[aria-live]")?.getAttribute("aria-live"));
+    const live = await page.evaluate(() => document.querySelector<HTMLElement>("#hint-note").closest("[aria-live]")?.getAttribute("aria-live"));
     if (live !== "polite") fail(`${name}: ${label}: the nudge should be announced like other hints (aria-live ${live})`);
   };
   // Press H, then the hinted move, until the level is won.
@@ -643,7 +645,7 @@ async function hintFlow(browser, name, viewport) {
   // The offer stays on one line on a 390px-wide screen with a keyboard.
   await page.setViewportSize({ width: 390, height: 844 });
   const offerFit = await page.evaluate(() => {
-    const n = document.querySelector("#hint-note"), s = document.querySelector(".status");
+    const n = document.querySelector<HTMLElement>("#hint-note"), s = document.querySelector<HTMLElement>(".status");
     const r = n.getBoundingClientRect(), t = document.createRange();
     t.selectNodeContents(n);
     const text = t.getBoundingClientRect();
@@ -684,7 +686,7 @@ async function hintFlow(browser, name, viewport) {
   // spot) for the last move. The nudge is free; the hint counts as one move.
   // Wait for it to load: lesson 5's cells stay on screen until it does, and
   // keys there do nothing.
-  const onToday = () => page.waitForFunction((t) => !document.querySelector(".play").hidden && document.querySelector("#level-title").textContent === t, `Puzzle ${level.id}`);
+  const onToday = () => page.waitForFunction((t) => !document.querySelector<HTMLElement>(".play").hidden && document.querySelector<HTMLElement>("#level-title").textContent === t, `Puzzle ${level.id}`);
   await onToday();
   await play(page, level.solution.slice(0, -1));
   await expectNudge("today's puzzle", nudges[`daily/${today}`]);
@@ -700,7 +702,7 @@ async function hintFlow(browser, name, viewport) {
   // puzzle starts again at move 1. Each way back to the start gives the nudge
   // first, free (lab#29), and the H after that is a counted hint.
   await page.click('[data-nav="learn"]');
-  await page.waitForFunction(() => document.querySelector("#level-title").textContent.startsWith("Plates"));
+  await page.waitForFunction(() => document.querySelector<HTMLElement>("#level-title").textContent.startsWith("Plates"));
   await page.click('[data-nav="today"]');
   await onToday();
   if ((await moves()) !== 1) fail(`${name}: after How to play and back to Today the hint should still count (moves ${await moves()}, wanted 1)`);
@@ -784,7 +786,7 @@ async function hintFlow(browser, name, viewport) {
       await expectSolved(page, name, `reopened past puzzle ${pastDate}`, pastLine, "Past puzzles");
       const reCopy = await page.evaluate(() => {
         Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async (t) => { window.__copied = t; } } });
-        document.querySelector("#solved-share").click();
+        document.querySelector<HTMLElement>("#solved-share").click();
         return new Promise((r) => setTimeout(() => r(window.__copied), 50));
       });
       if (!reCopy.startsWith(pastShare)) fail(`${name}: copying reopened past puzzle ${pastDate} should give its saved best with its hint, got "${reCopy.split("\n")[0]}"`);
@@ -860,7 +862,7 @@ const FIT = { board: "#board", status: ".status-row", controls: ".controls", dpa
 const playBoxes = (page) => page.evaluate((sel) => {
   const out = { scrollY: window.scrollY, width: window.innerWidth, height: window.innerHeight };
   for (const [k, s] of Object.entries(sel)) {
-    const b = document.querySelector(s).getBoundingClientRect();
+    const b = document.querySelector(String(s)).getBoundingClientRect();
     out[k] = { left: b.left, top: b.top + window.scrollY, right: b.right, bottom: b.bottom + window.scrollY, width: b.width, height: b.height };
   }
   return out;
@@ -931,8 +933,8 @@ async function lessons(browser, name, viewport, colorScheme, touch) {
       // Lesson 5: on move 7 the echo bumps door a and stays on plate B.
       if (n === 5 && j === 6) {
         const st = await page.evaluate(() => ({
-          bumped: document.querySelector(".piece.echo").classList.contains("bump"),
-          onB: (() => { const e = document.querySelector(".piece.echo"); return e.style.getPropertyValue("--x") + "," + e.style.getPropertyValue("--y"); })(),
+          bumped: document.querySelector<HTMLElement>(".piece.echo").classList.contains("bump"),
+          onB: (() => { const e = document.querySelector<HTMLElement>(".piece.echo"); return e.style.getPropertyValue("--x") + "," + e.style.getPropertyValue("--y"); })(),
         }));
         if (!st.bumped || st.onB !== "1,1") fail(`${name}: lesson 5 move 7 should bump the echo into door a, leaving it on plate B (bumped ${st.bumped}, echo at ${st.onB})`);
         await page.screenshot({ path: join(out, `${name}-lesson5-bump.png`) });
@@ -951,7 +953,7 @@ async function lessons(browser, name, viewport, colorScheme, touch) {
       // Close the dialog, then take the solved line's Next. On a phone, a fast
       // double-tap on it must not move in lesson 2: the d-pad comes back near
       // where Next was.
-      if (touch) await page.evaluate(() => document.querySelector("#win").close());
+      if (touch) await page.evaluate(() => document.querySelector<HTMLDialogElement>("#win").close());
       else await page.keyboard.press("Escape");
       await expectSolved(page, name, `lesson ${n}, after the dialog closed`, `Solved in ${sol.length} moves`, want, false);
       if (!touch) await page.click("#solved-next");
@@ -966,9 +968,9 @@ async function lessons(browser, name, viewport, colorScheme, touch) {
         await page.touchscreen.tap(r.x + r.width / 2, r.y + r.height / 2);
         await page.waitForTimeout(100);
         const after = await page.evaluate(() => ({
-          sub: document.querySelector("#level-sub").textContent,
-          moves: Number(document.querySelector("#moves").textContent.match(/Moves\s*(\d+)/)?.[1]),
-          bumped: document.querySelector(".piece.player").classList.contains("bump"),
+          sub: document.querySelector<HTMLElement>("#level-sub").textContent,
+          moves: Number(document.querySelector<HTMLElement>("#moves").textContent.match(/Moves\s*(\d+)/)?.[1]),
+          bumped: document.querySelector<HTMLElement>(".piece.player").classList.contains("bump"),
         }));
         if (after.sub !== "Lesson 2 of 5") fail(`${name}: double-tapping Next should open lesson 2, got "${after.sub}"`);
         if (after.moves !== 0 || after.bumped) fail(`${name}: a d-pad tap right after Next made a stray move in lesson 2 (moves ${after.moves}, bumped ${after.bumped})`);
@@ -978,7 +980,7 @@ async function lessons(browser, name, viewport, colorScheme, touch) {
     } else if (touch) await page.tap("#next");
     else await page.keyboard.press("Enter"); // the dialog's focused button is Copy result (hidden) or Next
   }
-  await page.waitForFunction(() => document.querySelector("#level-title").textContent.startsWith("Puzzle "), null, { timeout: 4000 })
+  await page.waitForFunction(() => document.querySelector<HTMLElement>("#level-title").textContent.startsWith("Puzzle "), null, { timeout: 4000 })
     .catch(() => fail(`${name}: "Play today's puzzle" after lesson 5 did not open today's puzzle`));
   const fit = await fits("today's puzzle");
   if (fit) {
@@ -993,7 +995,7 @@ async function lessons(browser, name, viewport, colorScheme, touch) {
 // line with 6% of it to spare (for wider system fonts), without moving the
 // d-pad or scrolling sideways.
 async function nudgesFit(page, name) {
-  const dpad = () => page.evaluate(() => document.querySelector(".dpad").getBoundingClientRect().top + window.scrollY);
+  const dpad = () => page.evaluate(() => document.querySelector<HTMLElement>(".dpad").getBoundingClientRect().top + window.scrollY);
   const before = await dpad();
   await page.tap("#hint");
   await page.waitForSelector("#hint-note:not([hidden])");
@@ -1001,7 +1003,7 @@ async function nudgesFit(page, name) {
   if (real !== nudges[`daily/${today}`]) fail(`${name}: tapping Hint on today's puzzle should show its nudge "${nudges[`daily/${today}`]}", got "${real}"`);
   await page.screenshot({ path: join(out, `${name}-daily-nudge.png`) });
   const sizes = await page.evaluate((texts) => {
-    const n = document.querySelector("#hint-note"), s = document.querySelector(".status");
+    const n = document.querySelector<HTMLElement>("#hint-note"), s = document.querySelector<HTMLElement>(".status");
     const shown = n.textContent;
     const rows = texts.map(([key, text]) => {
       n.textContent = text;
@@ -1171,7 +1173,7 @@ async function likesFlow(browser) {
   await desk.keyboard.press("Enter");
   h = await heart();
   if (h.pressed !== "true" || h.label !== "Like Afterstep, 13 likes") fail(`${name}: liking should show at once (got ${JSON.stringify(h)})`);
-  await desk.waitForFunction(() => !document.querySelector("#like-foot").hasAttribute("aria-busy"));
+  await desk.waitForFunction(() => !document.querySelector<HTMLElement>("#like-foot").hasAttribute("aria-busy"));
   api.delay = 0;
   if ((await desk.evaluate(() => document.activeElement.id)) !== "like-foot") fail(`${name}: a keyboard like should keep focus on the heart`);
   const s = await stored();
@@ -1186,7 +1188,7 @@ async function likesFlow(browser) {
 
   // Unlike by mouse: the stored receipt goes with DELETE, and focus goes back to the board.
   await desk.click("#like-foot");
-  await desk.waitForFunction(() => !document.querySelector("#like-foot").hasAttribute("aria-busy"));
+  await desk.waitForFunction(() => !document.querySelector<HTMLElement>("#like-foot").hasAttribute("aria-busy"));
   const del = api.calls.findLast((c) => c.method === "DELETE");
   if (!del || JSON.parse(del.body).receipt !== s?.receipt) fail(`${name}: unliking should send the stored receipt (sent ${del?.body})`);
   h = await heart();
@@ -1196,12 +1198,12 @@ async function likesFlow(browser) {
 
   // A later day: like, then pretend the date moved on. The receipt has no date, so unlike still works.
   await desk.click("#like-foot");
-  await desk.waitForFunction(() => document.querySelector("#like-foot").getAttribute("aria-pressed") === "true" && !document.querySelector("#like-foot").hasAttribute("aria-busy"));
+  await desk.waitForFunction(() => document.querySelector<HTMLElement>("#like-foot").getAttribute("aria-pressed") === "true" && !document.querySelector<HTMLElement>("#like-foot").hasAttribute("aria-busy"));
   await desk.clock.install({ time: new Date(Date.now() + 3 * 24 * 3600 * 1000) }).catch(() => {});
   await desk.reload({ waitUntil: "load" });
   await desk.waitForSelector("#like-foot:not([hidden])", { timeout: 3000 }).catch(() => {});
   await desk.click("#like-foot");
-  await desk.waitForFunction(() => !document.querySelector("#like-foot").hasAttribute("aria-busy"));
+  await desk.waitForFunction(() => !document.querySelector<HTMLElement>("#like-foot").hasAttribute("aria-busy"));
   if ((await heart()).pressed !== "false" || api.receipts.length) fail(`${name}: unliking three days later should work by the stored receipt (${JSON.stringify(await heart())}, server still has ${api.receipts.length})`);
   await desk.close();
 
@@ -1212,30 +1214,30 @@ async function likesFlow(browser) {
   await day.goto(base, { waitUntil: "networkidle" });
   await day.waitForSelector(".cell", { timeout: 8000 });
   await day.click('[data-nav="today"]');
-  await day.waitForFunction(() => document.querySelector("#level-title").textContent.startsWith("Puzzle "));
+  await day.waitForFunction(() => document.querySelector<HTMLElement>("#level-title").textContent.startsWith("Puzzle "));
   await play(day, level.solution);
   if (!(await dialogOpens(day))) fail(`${name}: today's puzzle not solved`);
-  const dlg = await day.evaluate(() => ({ ask: document.querySelector("#win-like").offsetParent ? document.querySelector("#win-like-ask").textContent : null, focus: document.activeElement.id }));
+  const dlg = await day.evaluate(() => ({ ask: document.querySelector<HTMLElement>("#win-like").offsetParent ? document.querySelector<HTMLElement>("#win-like-ask").textContent : null, focus: document.activeElement.id }));
   if (dlg.ask !== "Enjoyed today's puzzle?") fail(`${name}: the win dialog should ask "Enjoyed today's puzzle?" with its heart (got ${dlg.ask})`);
   if (dlg.focus !== "share") fail(`${name}: the win dialog should still open on Copy result, "${dlg.focus}" has focus`);
   day.likes.next = 409;
   await day.click("#like-win");
-  await day.waitForFunction(() => !document.querySelector("#like-win").hasAttribute("aria-busy"));
-  const n409 = await day.evaluate(() => ({ pressed: document.querySelector("#like-win").getAttribute("aria-pressed"), note: document.querySelector(".win-like-note").textContent, shown: !!document.querySelector(".win-like-note").offsetParent, live: document.querySelector("#like-live").textContent }));
+  await day.waitForFunction(() => !document.querySelector<HTMLElement>("#like-win").hasAttribute("aria-busy"));
+  const n409 = await day.evaluate(() => ({ pressed: document.querySelector<HTMLElement>("#like-win").getAttribute("aria-pressed"), note: document.querySelector<HTMLElement>(".win-like-note").textContent, shown: !!document.querySelector<HTMLElement>(".win-like-note").offsetParent, live: document.querySelector<HTMLElement>("#like-live").textContent }));
   if (n409.pressed !== "false") fail(`${name}: a 409 should roll the like back`);
   if (!n409.shown || !/already liked it today/.test(n409.note) || n409.live !== n409.note) fail(`${name}: a 409 should say so politely under the heart and to screen readers (${JSON.stringify(n409)})`);
   await day.screenshot({ path: join(out, `${name}-dialog-409.png`) });
   await day.click("#like-win");
-  await day.waitForFunction(() => !document.querySelector("#like-win").hasAttribute("aria-busy"));
-  const both = await day.evaluate(() => [...document.querySelectorAll(".like")].map((b) => b.getAttribute("aria-pressed") + " " + b.getAttribute("aria-label")));
+  await day.waitForFunction(() => !document.querySelector<HTMLElement>("#like-win").hasAttribute("aria-busy"));
+  const both = await day.evaluate(() => [...document.querySelectorAll<HTMLElement>(".like")].map((b) => b.getAttribute("aria-pressed") + " " + b.getAttribute("aria-label")));
   if (both.join() !== "true Like Afterstep, 13 likes,true Like Afterstep, 13 likes") fail(`${name}: liking in the dialog should show in both hearts, got ${JSON.stringify(both)}`);
   if (await day.isVisible(".win-like-note")) fail(`${name}: the 409 note should go once a like goes through`);
   await day.screenshot({ path: join(out, `${name}-dialog-liked.png`) });
   await day.keyboard.press("Escape");
   day.likes.next = 429;
   await day.click("#like-foot");
-  await day.waitForFunction(() => !document.querySelector("#like-foot").hasAttribute("aria-busy"));
-  const n429 = await day.evaluate(() => ({ pressed: document.querySelector("#like-foot").getAttribute("aria-pressed"), note: document.querySelector(".foot-like-note").textContent, shown: !!document.querySelector(".foot-like-note").offsetParent }));
+  await day.waitForFunction(() => !document.querySelector<HTMLElement>("#like-foot").hasAttribute("aria-busy"));
+  const n429 = await day.evaluate(() => ({ pressed: document.querySelector<HTMLElement>("#like-foot").getAttribute("aria-pressed"), note: document.querySelector<HTMLElement>(".foot-like-note").textContent, shown: !!document.querySelector<HTMLElement>(".foot-like-note").offsetParent }));
   if (n429.pressed !== "true" || !n429.shown || !/in a minute/.test(n429.note)) fail(`${name}: a 429 on unlike should keep the like and ask to try again in a minute (${JSON.stringify(n429)})`);
   await day.screenshot({ path: join(out, `${name}-foot-429.png`) });
   const cookies = await day.context().cookies();
@@ -1244,16 +1246,16 @@ async function likesFlow(browser) {
 
   // 390x844: the heart pushes nothing down, in the lessons and today's puzzle, with and without touch.
   for (const touch of [false, true]) {
-    const boxes = {};
+    const boxes: Record<string, any> = {};
     for (const mode of ["resting", "ok"]) {
       const p = await newPage(browser, { viewport: { width: 390, height: 844 }, hasTouch: touch, isMobile: touch }, { mode });
       await p.goto(base, { waitUntil: "networkidle" });
       await p.waitForSelector(".cell", { timeout: 8000 });
       if (mode === "ok") await p.waitForSelector("#like-foot:not([hidden])", { timeout: 3000 }).catch(() => fail(`${name}: no heart at 390px`));
-      const box = () => p.evaluate(() => ({ height: document.documentElement.scrollHeight, footer: Math.round(document.querySelector(".foot").getBoundingClientRect().top + window.scrollY), dpad: Math.round(document.querySelector(".dpad").getBoundingClientRect().top + window.scrollY), board: Math.round(document.querySelector("#board").getBoundingClientRect().top + window.scrollY), wide: document.documentElement.scrollWidth > window.innerWidth }));
+      const box = () => p.evaluate(() => ({ height: document.documentElement.scrollHeight, footer: Math.round(document.querySelector<HTMLElement>(".foot").getBoundingClientRect().top + window.scrollY), dpad: Math.round(document.querySelector<HTMLElement>(".dpad").getBoundingClientRect().top + window.scrollY), board: Math.round(document.querySelector<HTMLElement>("#board").getBoundingClientRect().top + window.scrollY), wide: document.documentElement.scrollWidth > window.innerWidth }));
       const lesson = await box();
       await (touch ? p.tap('[data-nav="today"]') : p.click('[data-nav="today"]'));
-      await p.waitForFunction(() => document.querySelector("#level-title").textContent.startsWith("Puzzle "));
+      await p.waitForFunction(() => document.querySelector<HTMLElement>("#level-title").textContent.startsWith("Puzzle "));
       boxes[mode] = { lesson, daily: await box() };
       if (mode === "ok") await p.locator(".foot").screenshot({ path: join(out, `${name}-foot-390${touch ? "-touch" : ""}.png`) });
       await p.close();
@@ -1277,7 +1279,7 @@ async function likesFlow(browser) {
     await p.addInitScript(() => {
       window.__heartSeen = false;
       const look = () => {
-        if ([...document.querySelectorAll(".like")].some((b) => b.offsetParent && !b.closest("[hidden]"))) window.__heartSeen = true;
+        if ([...document.querySelectorAll<HTMLElement>(".like")].some((b) => b.offsetParent && !b.closest("[hidden]"))) window.__heartSeen = true;
         requestAnimationFrame(look);
       };
       requestAnimationFrame(look);
@@ -1287,7 +1289,7 @@ async function likesFlow(browser) {
     if (!(await p.waitForSelector(".cell", { timeout: 3000 }).catch(() => null))) { fail(`${label}: the board should render without waiting for likes`); await p.close(); continue; }
     const painted = Date.now() - t0;
     await p.keyboard.press("ArrowRight");
-    const moved = await p.evaluate(() => document.querySelector("#moves").textContent.match(/Moves\s*(\d+)/)?.[1]);
+    const moved = await p.evaluate(() => document.querySelector<HTMLElement>("#moves").textContent.match(/Moves\s*(\d+)/)?.[1]);
     if (moved !== "1") fail(`${label}: a move should work right away (moves ${moved})`);
     await p.waitForTimeout(mode === "slow" ? 7000 : 600); // the slow answer is given up on after 6 s
     if (await p.evaluate(() => window.__heartSeen)) fail(`${label}: the heart should never show`);
@@ -1318,16 +1320,16 @@ async function likeTabs(browser) {
   const [a, b] = tabs;
   // Both hearts on the page (the footer's and the hidden win dialog's), and what is read out.
   const look = (p) => p.evaluate(() => ({
-    hearts: [...document.querySelectorAll(".like")].map((h) => `${h.getAttribute("aria-pressed")} ${h.getAttribute("aria-label")} ${h.querySelector(".like-n").textContent}${h.hasAttribute("aria-busy") ? " busy" : ""}`),
-    note: [...document.querySelectorAll(".like-note")].some((n) => !n.hidden) || document.querySelector("#like-live").textContent !== "",
+    hearts: [...document.querySelectorAll<HTMLElement>(".like")].map((h) => `${h.getAttribute("aria-pressed")} ${h.getAttribute("aria-label")} ${h.querySelector<HTMLElement>(".like-n").textContent}${h.hasAttribute("aria-busy") ? " busy" : ""}`),
+    note: [...document.querySelectorAll<HTMLElement>(".like-note")].some((n) => !n.hidden) || document.querySelector<HTMLElement>("#like-live").textContent !== "",
   }));
   const want = (liked, n) => [0, 1].map(() => `${liked} Like Afterstep, ${n} ${n === 1 ? "like" : "likes"} ${n}`);
   const shows = async (p, tab, liked, n, why) => {
-    const ok = await p.waitForFunction((w) => [...document.querySelectorAll(".like")].every((h, i) => `${h.getAttribute("aria-pressed")} ${h.getAttribute("aria-label")} ${h.querySelector(".like-n").textContent}` === w[i]), want(liked, n), { timeout: 2000 }).then(() => true, () => false);
+    const ok = await p.waitForFunction((w) => [...document.querySelectorAll<HTMLElement>(".like")].every((h, i) => `${h.getAttribute("aria-pressed")} ${h.getAttribute("aria-label")} ${h.querySelector<HTMLElement>(".like-n").textContent}` === w[i]), want(liked, n), { timeout: 2000 }).then(() => true, () => false);
     const got = await look(p);
     if (!ok || got.note) fail(`${name}: ${why}: tab ${tab} should show ${JSON.stringify(want(liked, n)[0])} with no note (got ${JSON.stringify(got)})`);
   };
-  const settled = (p) => p.waitForFunction(() => !document.querySelector("#like-foot").hasAttribute("aria-busy"));
+  const settled = (p) => p.waitForFunction(() => !document.querySelector<HTMLElement>("#like-foot").hasAttribute("aria-busy"));
 
   // A likes: B follows, +1, without asking the API anything.
   await a.click("#like-foot");
@@ -1349,7 +1351,7 @@ async function likeTabs(browser) {
   // once, isn't flipped back when B's lands, and its 409 ends on B's like, counted once.
   api.delay = 800;
   await a.evaluate(() => {
-    const h = document.querySelector("#like-foot");
+    const h = document.querySelector<HTMLElement>("#like-foot");
     const seen = (window.__seen = []);
     const note = () => { const s = `${h.getAttribute("aria-pressed")} ${h.getAttribute("aria-label")}`; if (seen.at(-1) !== s) seen.push(s); };
     new MutationObserver(note).observe(h, { attributes: true, attributeFilter: ["aria-pressed", "aria-label"] });
@@ -1397,13 +1399,13 @@ async function routes(browser, name, viewport) {
     url: location.href.slice(location.origin.length),
     title: document.title,
     length: history.length,
-    screen: document.querySelector(".play").hidden ? (document.querySelector("#archive").hidden ? "none" : "past") : document.querySelector("#level-title").textContent,
-    sub: document.querySelector("#level-sub").textContent,
-    dialog: !!document.querySelector("dialog[open]"),
+    screen: document.querySelector<HTMLElement>(".play").hidden ? (document.querySelector<HTMLElement>("#archive").hidden ? "none" : "past") : document.querySelector<HTMLElement>("#level-title").textContent,
+    sub: document.querySelector<HTMLElement>("#level-sub").textContent,
+    dialog: !!document.querySelector<HTMLElement>("dialog[open]"),
   }));
   const settle = (screen) => page.waitForFunction((screen) => {
-    const play = !document.querySelector(".play").hidden;
-    return screen === "past" ? !play && !document.querySelector("#archive").hidden : play && document.querySelector("#level-title").textContent === screen;
+    const play = !document.querySelector<HTMLElement>(".play").hidden;
+    return screen === "past" ? !play && !document.querySelector<HTMLElement>("#archive").hidden : play && document.querySelector<HTMLElement>("#level-title").textContent === screen;
   }, screen, { timeout: 3000 }).catch(() => {});
   async function expectAt(label, want) {
     if (!page.url().startsWith(origin)) return fail(`${name}: ${label}: left the site for ${page.url()}`);
@@ -1430,7 +1432,7 @@ async function routes(browser, name, viewport) {
 
   await page.click('[data-nav="archive"]');
   await expectAt("Past puzzles", { url: "/#/past", title: "Afterstep · Past puzzles", screen: "past", length: n0 + 2 });
-  await page.evaluate((id) => [...document.querySelectorAll("#archive-list button")].find((b) => b.textContent.startsWith(`Puzzle ${id} `)).click(), past.id);
+  await page.evaluate((id) => [...document.querySelectorAll<HTMLElement>("#archive-list button")].find((b) => b.textContent.startsWith(`Puzzle ${id} `)).click(), past.id);
   await expectAt("a past puzzle", { url: `/#/puzzle/${pastDate}`, title: pastTitle, screen: pastScreen, length: n0 + 3 });
   await page.keyboard.press("ArrowDown");
   await expectAt("a move on a past puzzle", { url: `/#/puzzle/${pastDate}`, length: n0 + 3 });
@@ -1466,7 +1468,7 @@ async function routes(browser, name, viewport) {
   await expectAt("Forward to Past puzzles", { url: "/#/past", screen: "past" });
   await page.goForward();
   await expectAt("Forward to the past puzzle", { url: `/#/puzzle/${pastDate}`, title: pastTitle, screen: pastScreen });
-  const navCurrent = await page.evaluate(() => document.querySelector("[data-nav][aria-current]")?.dataset.nav);
+  const navCurrent = await page.evaluate(() => document.querySelector<HTMLElement>("[data-nav][aria-current]")?.dataset.nav);
   if (navCurrent !== "archive") fail(`${name}: a past puzzle should mark Past puzzles in the nav, marks ${navCurrent}`);
 
   // Reload keeps the past puzzle; its result links to it.
@@ -1505,8 +1507,8 @@ async function routes(browser, name, viewport) {
     p.on("console", (m) => m.type() === "error" && fail(`${label}: console error: ${m.text()}`));
     p.on("pageerror", (e) => fail(`${label}: page error: ${e.message}`));
     await p.goto(new URL("/" + hash, base).href, { waitUntil: "networkidle" });
-    await p.waitForFunction((s) => !document.querySelector(".play").hidden && document.querySelector("#level-title").textContent === s, todayTitle, { timeout: 3000 }).catch(() => {});
-    const got = await p.evaluate(() => ({ url: location.href.slice(location.origin.length), title: document.title, screen: document.querySelector("#level-title").textContent, length: history.length }));
+    await p.waitForFunction((s) => !document.querySelector<HTMLElement>(".play").hidden && document.querySelector<HTMLElement>("#level-title").textContent === s, todayTitle, { timeout: 3000 }).catch(() => {});
+    const got = await p.evaluate(() => ({ url: location.href.slice(location.origin.length), title: document.title, screen: document.querySelector<HTMLElement>("#level-title").textContent, length: history.length }));
     const want = { url: "/", title: HOME_TITLE, screen: todayTitle, length: freshLength };
     if (JSON.stringify(got) !== JSON.stringify(want)) fail(`${label}: should open today's puzzle at the bare URL with nothing added to history, got ${JSON.stringify(got)}, wanted ${JSON.stringify(want)}`);
     // The same link followed in place (a hash change) also lands on today, replacing itself.
@@ -1514,7 +1516,7 @@ async function routes(browser, name, viewport) {
       await p.click('[data-nav="archive"]');
       const before = await p.evaluate(() => history.length);
       await p.evaluate((h) => { location.hash = h; }, hash);
-      await p.waitForFunction((s) => !document.querySelector(".play").hidden && document.querySelector("#level-title").textContent === s, todayTitle, { timeout: 3000 }).catch(() => {});
+      await p.waitForFunction((s) => !document.querySelector<HTMLElement>(".play").hidden && document.querySelector<HTMLElement>("#level-title").textContent === s, todayTitle, { timeout: 3000 }).catch(() => {});
       const after = await p.evaluate(() => ({ url: location.href.slice(location.origin.length), length: history.length }));
       if (after.url !== "/" || after.length !== before + 1) fail(`${label}: typed in place, should land on today at "/" (one entry for the typed link), got ${JSON.stringify(after)} from ${before}`);
     }
@@ -1557,7 +1559,7 @@ async function levelLoad(browser, name, viewport) {
   await page.addInitScript(() => {
     window.__loadSeen = false;
     const look = () => {
-      const l = document.querySelector("#load");
+      const l = document.querySelector<HTMLElement>("#load");
       if (l && !l.hidden && l.offsetParent) window.__loadSeen = true;
       requestAnimationFrame(look);
     };
@@ -1570,26 +1572,26 @@ async function levelLoad(browser, name, viewport) {
   }
 
   const state = () => page.evaluate(() => {
-    const none = { hidden: true, getAttribute: () => null, textContent: "" };
-    const load = document.querySelector("#load") ?? none, retry = document.querySelector("#retry") ?? none;
+    const none = { hidden: true, getAttribute: () => null, textContent: "", offsetParent: null };
+    const load = document.querySelector<HTMLElement>("#load") ?? none, retry = document.querySelector<HTMLElement>("#retry") ?? none;
     return {
       url: location.href.slice(location.origin.length),
-      screen: !document.querySelector(".play").hidden ? document.querySelector("#level-title").textContent : !document.querySelector("#archive").hidden ? "past" : load.hidden ? "none" : "load",
-      text: load.hidden ? null : document.querySelector("#load-text").textContent,
+      screen: !document.querySelector<HTMLElement>(".play").hidden ? document.querySelector<HTMLElement>("#level-title").textContent : !document.querySelector<HTMLElement>("#archive").hidden ? "past" : load.hidden ? "none" : "load",
+      text: load.hidden ? null : document.querySelector<HTMLElement>("#load-text").textContent,
       retry: !load.hidden && !retry.hidden && !!retry.offsetParent,
-      live: (document.querySelector("#load-live") ?? none).textContent,
-      liveRole: (document.querySelector("#load-live") ?? none).getAttribute("role"),
+      live: (document.querySelector<HTMLElement>("#load-live") ?? none).textContent,
+      liveRole: (document.querySelector<HTMLElement>("#load-live") ?? none).getAttribute("role"),
       focus: document.activeElement.id,
-      nav: document.querySelector("[data-nav][aria-current]")?.dataset.nav,
-      moves: Number(document.querySelector("#moves").textContent.match(/Moves\s*(\d+)/)?.[1]),
-      hint: !document.querySelector("#hint-note").hidden || !document.querySelector(".hint-mark").hidden,
-      bumped: [...document.querySelectorAll(".player, .echo, #solved")].filter((e) => e.classList.contains("bump")).map((e) => e.id || e.className),
-      solved: document.querySelector("#solved-text").textContent,
+      nav: document.querySelector<HTMLElement>("[data-nav][aria-current]")?.dataset.nav,
+      moves: Number(document.querySelector<HTMLElement>("#moves").textContent.match(/Moves\s*(\d+)/)?.[1]),
+      hint: !document.querySelector<HTMLElement>("#hint-note").hidden || !document.querySelector<HTMLElement>(".hint-mark").hidden,
+      bumped: [...document.querySelectorAll<HTMLElement>(".player, .echo, #solved")].filter((e) => e.classList.contains("bump")).map((e) => e.id || e.className),
+      solved: document.querySelector<HTMLElement>("#solved-text").textContent,
     };
   });
   const failedNow = (want) => page.waitForFunction((want) => {
-    const l = document.querySelector("#load");
-    return l && !l.hidden && !document.querySelector("#retry").hidden && document.querySelector("#load-text").textContent === want;
+    const l = document.querySelector<HTMLElement>("#load");
+    return l && !l.hidden && !document.querySelector<HTMLElement>("#retry").hidden && document.querySelector<HTMLElement>("#load-text").textContent === want;
   }, want, { timeout: 3000 }).then(() => true, () => false);
   // Focus that was on the screen the message replaces moves to Retry; focus on
   // the nav stays there, and Tab goes on to Retry.
@@ -1608,7 +1610,7 @@ async function levelLoad(browser, name, viewport) {
     } else if (s.focus !== "retry") fail(`${name}: ${label}: focus should be on Retry, is on "${s.focus}"`);
     return s;
   }
-  const settle = (title) => page.waitForFunction((t) => !document.querySelector(".play").hidden && document.querySelector("#level-title").textContent === t && document.querySelector("#load")?.hidden !== false, title, { timeout: 4000 }).then(() => true, () => false);
+  const settle = (title) => page.waitForFunction((t) => !document.querySelector<HTMLElement>(".play").hidden && document.querySelector<HTMLElement>("#level-title").textContent === t && document.querySelector<HTMLElement>("#load")?.hidden !== false, title, { timeout: 4000 }).then(() => true, () => false);
 
   // Offline: Past puzzles, then a puzzle whose request can't go out.
   const daily = `**/levels/daily/${pastDate}.json`;
@@ -1624,7 +1626,7 @@ async function levelLoad(browser, name, viewport) {
 
   // Back and Forward still work.
   await page.goBack();
-  if (!(await page.waitForFunction(() => !document.querySelector("#archive").hidden && document.querySelector("#load")?.hidden !== false, null, { timeout: 3000 }).catch(() => null)))
+  if (!(await page.waitForFunction(() => !document.querySelector<HTMLElement>("#archive").hidden && document.querySelector<HTMLElement>("#load")?.hidden !== false, null, { timeout: 3000 }).catch(() => null)))
     fail(`${name}: Back from the message should show Past puzzles, got ${JSON.stringify(await state())}`);
   await page.goForward();
   await expectFailed("Forward to the puzzle, still offline");
@@ -1672,20 +1674,20 @@ async function levelLoad(browser, name, viewport) {
       await play(page, past.solution.slice(2, 3));
     }
     // Any nudge from here on is new.
-    await page.evaluate(() => document.querySelectorAll(".bump").forEach((e) => e.classList.remove("bump")));
+    await page.evaluate(() => document.querySelectorAll<HTMLElement>(".bump").forEach((e) => e.classList.remove("bump")));
     const was = await state();
     await delay(to, 1500);
     const t0 = Date.now();
     await page.evaluate((d) => { location.hash = d === "" ? "#/" : `#/puzzle/${d}`; }, to === today ? "" : to);
     for (const k of ["ArrowRight", "ArrowDown", "Space", "KeyH", "KeyZ", "KeyR", "KeyU", "KeyH"]) await page.keyboard.press(k);
-    await page.evaluate(() => document.querySelectorAll(".dpad button").forEach((b) => b.click()));
+    await page.evaluate(() => document.querySelectorAll<HTMLElement>(".dpad button").forEach((b) => b.click()));
     for (const b of ["#wait", "#hint", "#undo", "#restart"]) await page.click(b);
     const during = await state();
     const quick = Date.now() - t0 < 550;
     if (during.screen !== was.screen || during.moves !== was.moves || during.hint || during.bumped.length || during.solved !== was.solved)
       fail(`${name}: ${label}: the old board should be left alone, was ${JSON.stringify(was)}, is ${JSON.stringify(during)}`);
     if (quick && during.text !== null) fail(`${name}: ${label}: no message in the first moment, got "${during.text}"`);
-    if (!(await page.waitForFunction(() => document.querySelector("#load-text")?.textContent === "Loading the puzzle…" && !document.querySelector("#load").hidden, null, { timeout: 1300 }).catch(() => null)))
+    if (!(await page.waitForFunction(() => document.querySelector<HTMLElement>("#load-text")?.textContent === "Loading the puzzle…" && !document.querySelector<HTMLElement>("#load").hidden, null, { timeout: 1300 }).catch(() => null)))
       fail(`${name}: ${label}: a slow load should say so after a moment, got ${JSON.stringify(await state())}`);
     else if (from === past) await page.screenshot({ path: join(out, `${name}-loading.png`) });
     if (!(await settle(toTitle))) fail(`${name}: ${label}: ${toTitle} should open once it loads`);
@@ -1709,7 +1711,7 @@ async function levelLoad(browser, name, viewport) {
   await phone.route("**/levels/index.json", (r) => { phoneExpected++; return r.abort("internetdisconnected"); });
   await phone.goto(base, { waitUntil: "load" });
   const BOOT_FAILED = "Afterstep didn't load. Check your connection and try again.";
-  const bootFailed = await phone.waitForFunction((t) => document.querySelector("#load")?.hidden === false && document.querySelector("#load-text").textContent === t && !document.querySelector("#retry").hidden, BOOT_FAILED, { timeout: 4000 }).then(() => true, () => false);
+  const bootFailed = await phone.waitForFunction((t) => document.querySelector<HTMLElement>("#load")?.hidden === false && document.querySelector<HTMLElement>("#load-text").textContent === t && !document.querySelector<HTMLElement>("#retry").hidden, BOOT_FAILED, { timeout: 4000 }).then(() => true, () => false);
   if (!bootFailed) fail(`${name} phone: a blocked index should say "${BOOT_FAILED}" with Retry`);
   else {
     const box = await phone.locator("#retry").boundingBox();
@@ -1717,7 +1719,7 @@ async function levelLoad(browser, name, viewport) {
     await phone.screenshot({ path: join(out, `${name}-phone-failed.png`) });
     await phone.unroute("**/levels/index.json");
     await phone.tap("#retry");
-    if (!(await phone.waitForFunction(() => !document.querySelector(".play").hidden && document.querySelector(".cell") && document.querySelector("#load")?.hidden !== false, null, { timeout: 4000 }).catch(() => null)))
+    if (!(await phone.waitForFunction(() => !document.querySelector<HTMLElement>(".play").hidden && document.querySelector<HTMLElement>(".cell") && document.querySelector<HTMLElement>("#load")?.hidden !== false, null, { timeout: 4000 }).catch(() => null)))
       fail(`${name} phone: Retry should load Afterstep once the network is back`);
     else if ((await phone.textContent("#level-title")) !== "Plates open doors") fail(`${name} phone: after Retry a newcomer should get the first lesson`);
   }

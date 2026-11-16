@@ -62,7 +62,7 @@ test("an old save (no hint fields) still loads: its results had no hints", () =>
   assert.deepEqual(bestResult(save, DAY), { moves: 36, hints: 0 });
   assert.equal(bestResult(save, "2026-11-11"), null);
   assert.equal(hintsSeen(save, DAY), 0);
-  assert.equal(archiveLine(bestResult(save, "2026-11-10")), "solved in 14");
+  assert.equal(archiveLine(bestResult(save, "2026-11-10")!), "solved in 14");
 });
 
 test("a missing, broken or odd save starts empty instead of throwing", () => {

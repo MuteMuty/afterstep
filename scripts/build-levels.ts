@@ -8,10 +8,13 @@ rmSync(out, { recursive: true, force: true });
 mkdirSync(join(out, "daily"), { recursive: true });
 mkdirSync(join(out, "tutorial"), { recursive: true });
 
-const strip = ({ solution, explored, needsEcho, needsBump, ...rest }) => rest;
-const daily = [];
+// A level file as the generator writes it; only these fields are read here.
+type Level = { id: string; date?: string; tier?: string; par?: number; solution?: unknown[]; [field: string]: unknown };
+
+const strip = ({ solution, explored, needsEcho, needsBump, ...rest }: Level) => rest;
+const daily: Pick<Level, "id" | "date" | "tier" | "par">[] = [];
 for (const f of readdirSync(join(root, "levels/daily")).filter((f) => f.endsWith(".json")).sort()) {
-  const lvl = JSON.parse(readFileSync(join(root, "levels/daily", f), "utf8"));
+  const lvl: Level = JSON.parse(readFileSync(join(root, "levels/daily", f), "utf8"));
   lvl.par = lvl.par ?? lvl.solution?.length;
   writeFileSync(join(out, "daily", f), JSON.stringify(strip(lvl)));
   daily.push({ id: lvl.id, date: lvl.date, tier: lvl.tier, par: lvl.par });
