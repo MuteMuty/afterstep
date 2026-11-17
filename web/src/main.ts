@@ -2,7 +2,7 @@ import "./style.css";
 import init, { WasmGame } from "./wasm/afterstep_engine.js";
 import { createLikes, LIKE_KEY, likeLabel, type LikeState } from "./likes";
 import { isPlainClick, parseRoute, puzzleHref, puzzleRoute, routeHash, routeTitle, shareUrl, type Route } from "./route";
-import { boardNews, boardState, type BoardState } from "./announce";
+import { boardNews, boardState, echoBump, type BoardState } from "./announce";
 import { fetchChecked, isIndex, isLevel, type Index, type Level } from "./levels";
 import {
   archiveParts, bestResult, countHint, hintText, hintsSeen, readSave, recordResult, resultLine, shareLine, total, winTitle,
@@ -166,18 +166,19 @@ function predictEcho(g: WasmGame): { pos: number; inMoves: number }[] {
 // The board as last announced; null after a load or Start over, which say nothing.
 let lastBoard: BoardState | null = null;
 
-function render() {
+/** Draw the board. `echoNews` is what to say when the echo just bumped (see act). */
+function render(echoNews = "") {
   if (!game) return;
   clearHint();
   const g = game;
   const open = g.open_doors();
   const player = g.player();
   const echo = g.echo();
-  // Plates pressed, doors opening or closing and the echo appearing are read out
-  // through the status line's live region (lab#9). Plain steps clear it, so the
-  // same news later is read again.
+  // Plates pressed, doors opening or closing, the echo appearing and its bumps
+  // are read out through the news live region (lab#9, lab#42). Plain steps clear
+  // it, so the same news later is read again.
   const now = boardState(tiles, player, echo, open);
-  boardNewsEl.textContent = boardNews(lastBoard, now);
+  boardNewsEl.textContent = boardNews(lastBoard, now, echoNews);
   lastBoard = now;
   tiles.forEach((c, i) => {
     if (c >= "a" && c <= "h") els.cells[i].classList.toggle("open", (open & (1 << letterOf(c))) !== 0 || i === player || i === echo);
@@ -305,12 +306,19 @@ function bump(el: HTMLElement) {
 function act(a: number) {
   if (!game || loading || win.open) return;
   if (solved || game.won()) return nudgeSolved();
+  const echoFrom = game.echo();
   if (!game.step(a)) {
     bump(els.player);
     return;
   }
-  if (game.echo_blocked_last()) bump(els.echo);
-  render();
+  // The echo bumped: it replayed the move from `delay` steps ago and stayed put.
+  let said = "";
+  if (game.echo_blocked_last()) {
+    bump(els.echo);
+    const hist = game.history();
+    said = echoBump(tiles, w, echoFrom, hist[hist.length - 1 - level.delay]);
+  }
+  render(said);
   if (game.won()) {
     const g = game, token = screenToken;
     // Only celebrate if the same game is still on screen (the player may have

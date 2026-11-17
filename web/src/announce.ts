@@ -1,7 +1,8 @@
 // What the board says to screen readers (lab#9): plates pressed, doors opening
-// and closing, and the echo appearing. Ordinary steps say nothing, and a plate
-// held down is announced once. No DOM: main.ts reads the game into a BoardState
-// after every change and puts boardNews into the status line's live region.
+// and closing, the echo appearing, and the echo bumping into a door (lab#42).
+// Ordinary steps say nothing, and a plate held down is announced once. No DOM:
+// main.ts reads the game into a BoardState after every change and puts
+// boardNews into the news live region.
 
 export type Who = "you" | "echo" | "both";
 
@@ -40,10 +41,11 @@ export function boardState(tiles: string[], player: number, echo: number, open: 
 const PRESS: Record<Who, string> = { you: "You press", echo: "The echo presses", both: "You and the echo press" };
 
 /** What changed from `before` to `after`, as one or more short sentences, or ""
- *  when nothing worth saying did. `before` null (a new board) says nothing. */
-export function boardNews(before: BoardState | null, after: BoardState): string {
+ *  when nothing worth saying did. `bump` (from echoBump) is said first, when the
+ *  echo bumped on this step. `before` null (a new board) says nothing. */
+export function boardNews(before: BoardState | null, after: BoardState, bump = ""): string {
   if (!before) return "";
-  const out: string[] = [];
+  const out: string[] = bump ? [bump] : [];
   if (after.echo && !before.echo) out.push("Your echo appears.");
   for (const L of Object.keys(after.plates).sort()) {
     if (!before.plates[L]) out.push(`${PRESS[after.plates[L]]} plate ${L}.`);
@@ -52,4 +54,16 @@ export function boardNews(before: BoardState | null, after: BoardState): string 
     if (after.doors[L] !== !!before.doors[L]) out.push(`Door ${L} ${after.doors[L] ? "opens" : "closes"}.`);
   }
   return out.join(" ");
+}
+
+const STEP: Record<string, [number, number]> = { U: [0, -1], D: [0, 1], L: [-1, 0], R: [1, 0] };
+
+/** What to say when the echo bumps: it tried to replay `move` (U, D, L or R) from
+ *  cell `from` on a board `width` cells wide and stayed put, so it fell out of
+ *  step. A closed door is named; anything else stopping it is a wall. */
+export function echoBump(tiles: string[], width: number, from: number, move: string): string {
+  const [dx, dy] = STEP[move];
+  const x = (from % width) + dx, y = Math.floor(from / width) + dy;
+  const c = x >= 0 && x < width && y >= 0 ? tiles[y * width + x] ?? "#" : "#";
+  return c >= "a" && c <= "h" ? `The echo bumps into door ${letter(c)}.` : "The echo bumps into a wall.";
 }

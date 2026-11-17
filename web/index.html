@@ -36,11 +36,15 @@
           </div>
 
           <div class="status-row">
-            <div class="status" aria-live="polite">
+            <div class="status">
               <span id="echo-status"></span>
               <span id="moves"></span>
-              <span id="hint-note" class="hint-note" hidden></span>
-              <span id="board-news" class="sr-only"></span>
+              <!-- News (lab#42): hints and what the board does are read out; the echo
+                   status and move counter above aren't, so a plain step says nothing. -->
+              <span class="news" aria-live="polite">
+                <span id="hint-note" class="hint-note" hidden></span>
+                <span id="board-news" class="sr-only"></span>
+              </span>
             </div>
             <div id="solved" class="solved">
               <p id="solved-text" class="solved-text" role="status"></p>
