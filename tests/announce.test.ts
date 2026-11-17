@@ -2,7 +2,7 @@
 // Run: node --test tests/
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { boardState, boardNews } from "../web/src/announce.ts";
+import { boardState, boardNews, echoBump } from "../web/src/announce.ts";
 
 // A small board: a plate and a door for A, a plate and two doors for B.
 //   S . A a
@@ -84,4 +84,30 @@ test("E is the exit, not a plate: reaching it says nothing", () => {
   const withExit = "S.E".split("");
   assert.deepEqual(boardState(withExit, 2, 0, 0).plates, {});
   assert.equal(boardNews(boardState(withExit, 1, 0, 0), boardState(withExit, 2, 1, 0)), "");
+});
+
+// The echo bumps (lab#42): it tried to replay a move and stayed put. On the board
+// above (4 wide), right of plate A is door a and right of plate B is door b;
+// up or left from S, right from door a and down from B are off the board.
+const W = 4;
+test("the echo bumping into a closed door names the door", () => {
+  assert.equal(echoBump(tiles, W, A, "R"), "The echo bumps into door A.");
+  assert.equal(echoBump(tiles, W, B, "R"), "The echo bumps into door B.");
+});
+
+test("the echo bumping into a wall or the board's edge says a wall", () => {
+  assert.equal(echoBump("S#..".split(""), W, S, "R"), "The echo bumps into a wall.");
+  assert.equal(echoBump(tiles, W, S, "U"), "The echo bumps into a wall.");
+  assert.equal(echoBump(tiles, W, S, "L"), "The echo bumps into a wall.");
+  assert.equal(echoBump(tiles, W, a, "R"), "The echo bumps into a wall.");
+  assert.equal(echoBump(tiles, W, B, "D"), "The echo bumps into a wall.");
+});
+
+test("a bump is said once, before what the board does in the same step", () => {
+  const before = boardState(tiles, 1, B, bit("B"));
+  assert.equal(boardNews(before, boardState(tiles, S, B, bit("B")), echoBump(tiles, W, B, "R")), "The echo bumps into door B.");
+  assert.equal(boardNews(boardState(tiles, A, B, bit("A") | bit("B")), boardState(tiles, 1, B, bit("B")), echoBump(tiles, W, B, "R")), "The echo bumps into door B. Door A closes.");
+  // No bump, no bump news; a new board says nothing, bump or not.
+  assert.equal(boardNews(before, boardState(tiles, S, B, bit("B")), ""), "");
+  assert.equal(boardNews(null, before, echoBump(tiles, W, B, "R")), "");
 });

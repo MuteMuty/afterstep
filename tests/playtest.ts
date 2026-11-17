@@ -17,6 +17,10 @@
 // by keyboard (desktop, dark) and by tapping the d-pad (phone, light), checking
 // "Lesson n of 5", where each win dialog leads, that lesson 5 fits, and that
 // lessons 4 and 5's tips name plates in full ("plate B", lab#29).
+// Screen readers (lab#42): the move counter and echo status are outside every
+// live region; in lesson 5 the live regions say nothing after a plain step,
+// the echo, plate and door news after the second, and "The echo bumps into
+// door A." when the echo bumps.
 // Solved state: hidden while the win dialog is open; after it closes (Escape), a
 // solved line with Copy result and Next stays (the result in the status line's
 // place, the buttons in the keys hint's or d-pad's), keys nudge it, Tab reaches
@@ -177,6 +181,10 @@ function expectSameBox(name, label, playing, solved) {
     fail(`${name}: ${label}: the solved line should not grow the page or move the footer (during play ${JSON.stringify(playing)}, solved ${JSON.stringify(solved)})`);
   else console.log(`${name}: page ${solved.height}px, footer at ${solved.footer}px, same as during play`);
 }
+
+// The text of every live region on the play screen that isn't empty (lab#42).
+const liveText = (page) => page.evaluate(() =>
+  [...document.querySelectorAll<HTMLElement>(".play [aria-live], .play [role=status]")].map((e) => e.textContent.trim()).filter(Boolean));
 
 async function play(page, moves) {
   for (const m of moves) await page.keyboard.press(KEY[m]);
@@ -861,7 +869,7 @@ async function oldSave(browser, name, viewport) {
 // "Lesson n of 5"; lessons 1-4 lead to the next, lesson 5 to today's puzzle.
 // Lesson 5 can only be won by letting the echo bump door a while it stands on
 // plate B: check it does, that the board and d-pad fit like lesson 4's, and
-// that its tip reads as one balanced block.
+// that its tip reads as one balanced block. Its live regions say only news.
 const LESSONS = ["RRRRR", "RRLDDD", "RRRRLLLDUDDD", "RRLDDDDD", "RRLDDDDDR"];
 
 // The play screen's parts that must be on screen together on a phone (lab#10).
@@ -934,9 +942,20 @@ async function lessons(browser, name, viewport, colorScheme, touch) {
       console.log(`${name}: lesson 5 board ${at.board.width}x${at.board.height}, d-pad ends at ${Math.round(at.dpad.bottom)}px of ${viewport.height} (lessons 1-4: ${Math.round(lowest)}px)`);
       await page.screenshot({ path: join(out, `${name}-lesson5.png`) });
     }
+    if (n === 5) {
+      const outside = await page.evaluate(() => ["#moves", "#echo-status"].filter((s) => document.querySelector(s).closest("[aria-live], [role=status]")));
+      if (outside.length) fail(`${name}: ${outside.join(" and ")} should be outside every live region, so plain steps say nothing`);
+    }
     for (const [j, m] of [...sol].entries()) {
       await move(m);
       if (j === sol.length - 2) await fits(`lesson ${n}, before its last move`);
+      // Lesson 5 (lab#42): what screen readers hear after a plain step, the
+      // echo arriving as you press plate A, and the echo's bump on move 7.
+      if (n === 5 && (j === 0 || j === 1 || j === 6)) {
+        const want = ["", "Your echo appears. You press plate A. Door A opens.", "", "", "", "", "The echo bumps into door A."][j];
+        const said = (await liveText(page)).join(" | ");
+        if (said !== want) fail(`${name}: lesson 5 move ${j + 1}: the live regions should say "${want}", say "${said}"`);
+      }
       // Lesson 5: on move 7 the echo bumps door a and stays on plate B.
       if (n === 5 && j === 6) {
         const st = await page.evaluate(() => ({
