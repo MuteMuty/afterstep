@@ -1,7 +1,7 @@
 import "./style.css";
 import init, { WasmGame } from "./wasm/afterstep_engine.js";
 import { createLikes, LIKE_KEY, likeLabel, type LikeState } from "./likes";
-import { parseRoute, routeHash, routeTitle, shareUrl, type Route } from "./route";
+import { isPlainClick, parseRoute, puzzleHref, puzzleRoute, routeHash, routeTitle, shareUrl, type Route } from "./route";
 import { boardNews, boardState, type BoardState } from "./announce";
 import { fetchChecked, isIndex, isLevel, type Index, type Level } from "./levels";
 import {
@@ -500,7 +500,12 @@ function openLearn(step = 0) {
   setNav("learn");
 }
 
+/** Past puzzles. Each entry is a link to its puzzle (lab#41), so it opens in a
+ *  new tab and its address copies. A plain click changes screen like the nav;
+ *  today's entry opens today's puzzle at the bare URL. */
 function openArchive() {
+  // The daily on screen before, whose entry gets the focus when it was on that screen.
+  const from = !playEl.hidden && mode === "daily" && level ? level.date : null;
   newScreen();
   const today = localDate();
   const list = $("archive-list");
@@ -510,17 +515,31 @@ function openArchive() {
       .reverse()
       .map((d) => {
         const li = document.createElement("li");
-        const b = document.createElement("button");
+        const a = document.createElement("a");
         const best = bestResult(save, d.date);
-        b.innerHTML = `<span>Puzzle ${d.id} <span class="meta">${prettyDate(d.date)}</span></span>` +
+        a.href = puzzleHref(d.date);
+        a.dataset.date = d.date;
+        a.innerHTML = `<span>Puzzle ${d.id} <span class="meta">${prettyDate(d.date)}</span></span>` +
           `<span class="meta">${TIER[d.tier]}${best ? `, <span class="done">${archiveParts(best).map((t) => `<span>${t}</span>`).join(" ")}</span>` : ""}</span>`;
-        b.onclick = () => go({ kind: "puzzle", date: d.date });
-        li.append(b);
+        a.onclick = (e) => {
+          if (!isPlainClick(e)) return;
+          e.preventDefault();
+          go(puzzleRoute(d.date, localDate()));
+        };
+        li.append(a);
         return li;
       }),
   );
   show("archive");
   setNav("archive");
+  // Focus that was on the screen just hidden (Back from a puzzle, its Next) goes
+  // to the entry it came from, or the heading; focus on the nav stays.
+  const f = document.activeElement;
+  if (!f || f === document.body || f.closest("[hidden]")) {
+    const entry = from ? list.querySelector<HTMLElement>(`a[data-date="${from}"]`) : null;
+    if (entry) entry.focus();
+    else $("archive-title").focus({ preventScroll: true });
+  }
 }
 
 function show(which: "play" | "archive" | "load") {

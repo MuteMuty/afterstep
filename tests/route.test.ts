@@ -2,7 +2,7 @@
 // Run: node --test tests/
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseRoute, routeHash, routeTitle, shareUrl, HOME_TITLE } from "../web/src/route.ts";
+import { parseRoute, routeHash, routeTitle, shareUrl, puzzleRoute, puzzleHref, isPlainClick, HOME_TITLE } from "../web/src/route.ts";
 
 // What the site knows when it reads a link: today's date, the puzzles out so far, the lessons.
 const ctx = { today: "2026-11-13", dates: ["2026-11-10", "2026-11-11", "2026-11-12", "2026-11-13"], lessons: 5 };
@@ -25,9 +25,39 @@ test("Past puzzles is #/past", () => {
   assert.deepEqual(parseRoute("#/past", ctx), { kind: "past" });
 });
 
-test("a puzzle that's out is #/puzzle/<date>, today's included", () => {
+test("an earlier puzzle that's out is #/puzzle/<date>", () => {
   assert.deepEqual(parseRoute("#/puzzle/2026-11-10", ctx), { kind: "puzzle", date: "2026-11-10" });
-  assert.deepEqual(parseRoute("#/puzzle/2026-11-13", ctx), { kind: "puzzle", date: "2026-11-13" });
+  assert.deepEqual(parseRoute("#/puzzle/2026-11-12", ctx), { kind: "puzzle", date: "2026-11-12" });
+});
+
+test("#/puzzle/<today's date> is today's puzzle, so today has one address (lab#41)", () => {
+  assert.deepEqual(parseRoute("#/puzzle/2026-11-13", ctx), { kind: "today" });
+  assert.equal(routeHash(parseRoute("#/puzzle/2026-11-13", ctx)!), "");
+  assert.equal(routeTitle(parseRoute("#/puzzle/2026-11-13", ctx)!), HOME_TITLE);
+  // Tomorrow, the same link is an earlier puzzle.
+  assert.deepEqual(parseRoute("#/puzzle/2026-11-13", { ...ctx, today: "2026-11-14" }), { kind: "puzzle", date: "2026-11-13" });
+});
+
+test("puzzleRoute names a day's puzzle, today's as today", () => {
+  assert.deepEqual(puzzleRoute("2026-11-10", "2026-11-13"), { kind: "puzzle", date: "2026-11-10" });
+  assert.deepEqual(puzzleRoute("2026-11-13", "2026-11-13"), { kind: "today" });
+});
+
+test("a Past puzzles entry links to #/puzzle/<date>, today's too", () => {
+  assert.equal(puzzleHref("2026-11-10"), "#/puzzle/2026-11-10");
+  assert.equal(puzzleHref("2026-11-13"), "#/puzzle/2026-11-13");
+  // Each entry's link opens what the entry names.
+  assert.deepEqual(parseRoute(puzzleHref("2026-11-10"), ctx), puzzleRoute("2026-11-10", ctx.today));
+  assert.deepEqual(parseRoute(puzzleHref("2026-11-13"), ctx), puzzleRoute("2026-11-13", ctx.today));
+});
+
+test("only a plain left click is the page's to handle; other clicks are the browser's", () => {
+  const plain = { button: 0, metaKey: false, ctrlKey: false, shiftKey: false, altKey: false, defaultPrevented: false };
+  assert.equal(isPlainClick(plain), true);
+  for (const k of ["metaKey", "ctrlKey", "shiftKey", "altKey"]) assert.equal(isPlainClick({ ...plain, [k]: true }), false, k);
+  assert.equal(isPlainClick({ ...plain, button: 1 }), false, "middle button");
+  assert.equal(isPlainClick({ ...plain, button: 2 }), false, "right button");
+  assert.equal(isPlainClick({ ...plain, defaultPrevented: true }), false, "already handled");
 });
 
 test("a puzzle date that isn't out yet, never existed or is malformed reads as null", () => {
