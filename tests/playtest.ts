@@ -53,6 +53,13 @@
 // a past puzzle's copied result links to it, today's to the home page; links
 // to a future, missing or malformed date or an unknown route open today's
 // puzzle with the URL replaced and no console error.
+// Past puzzles links (lab#41): each entry is an <a href="#/puzzle/<date>">
+// styled as before (border, no underline, hover, focus ring, full width); a
+// middle click and a Cmd/Ctrl click open it in a new tab and leave the list
+// alone; #/puzzle/<today> (from the list, opened directly or typed in place)
+// is today's puzzle at the bare URL with the home title and Today marked (a
+// newcomer opening it gets lesson 1, as at the bare URL); Back
+// to Past puzzles focuses the entry you came from, or the heading.
 // Level loading (lab#40): a daily's request blocked, refused (404) or not a
 // level, and the index blocked, show a short message with Retry (announced,
 // focused, Back works) and no page or console error but the browser's own line
@@ -146,14 +153,14 @@ async function expectCue(page, name, label, key) {
 async function openPast(page, id) {
   await page.click('[data-nav="archive"]');
   await page.waitForSelector("#archive:not([hidden])");
-  await page.evaluate((id) => [...document.querySelectorAll<HTMLElement>("#archive-list button")].find((b) => b.textContent.startsWith(`Puzzle ${id} `)).click(), id);
+  await page.evaluate((id) => [...document.querySelectorAll<HTMLElement>("#archive-list a")].find((b) => b.textContent.startsWith(`Puzzle ${id} `)).click(), id);
   await page.waitForFunction((id) => !document.querySelector<HTMLElement>(".play").hidden && document.querySelector<HTMLElement>("#level-title").textContent === `Puzzle ${id}`, id);
 }
 // Past puzzles' "solved in ..." for a puzzle ("" if unsolved), opening the list first.
 async function archiveDone(page, id) {
   await page.click('[data-nav="archive"]');
   await page.waitForSelector("#archive:not([hidden])");
-  return page.evaluate((id) => [...document.querySelectorAll<HTMLElement>("#archive-list button")].find((b) => b.textContent.startsWith(`Puzzle ${id} `))?.querySelector<HTMLElement>(".done")?.textContent ?? "", id);
+  return page.evaluate((id) => [...document.querySelectorAll<HTMLElement>("#archive-list a")].find((b) => b.textContent.startsWith(`Puzzle ${id} `))?.querySelector<HTMLElement>(".done")?.textContent ?? "", id);
 }
 const stubClipboard = (page) => page.evaluate(() => {
   window.__copied = "";
@@ -1432,7 +1439,7 @@ async function routes(browser, name, viewport) {
 
   await page.click('[data-nav="archive"]');
   await expectAt("Past puzzles", { url: "/#/past", title: "Afterstep · Past puzzles", screen: "past", length: n0 + 2 });
-  await page.evaluate((id) => [...document.querySelectorAll<HTMLElement>("#archive-list button")].find((b) => b.textContent.startsWith(`Puzzle ${id} `)).click(), past.id);
+  await page.locator(`#archive-list a[href="#/puzzle/${pastDate}"]`).click();
   await expectAt("a past puzzle", { url: `/#/puzzle/${pastDate}`, title: pastTitle, screen: pastScreen, length: n0 + 3 });
   await page.keyboard.press("ArrowDown");
   await expectAt("a move on a past puzzle", { url: `/#/puzzle/${pastDate}`, length: n0 + 3 });
@@ -1456,6 +1463,7 @@ async function routes(browser, name, viewport) {
   await expectAt("Back to the past puzzle", { url: `/#/puzzle/${pastDate}`, title: pastTitle, screen: pastScreen });
   await page.goBack();
   await expectAt("Back to Past puzzles", { url: "/#/past", title: "Afterstep · Past puzzles", screen: "past" });
+  await expectPastFocus(page, name, "Back to Past puzzles from a past puzzle", pastDate);
   await page.goBack();
   await expectAt("Back to today", { url: "/", title: HOME_TITLE, screen: todayTitle });
   await page.goBack();
@@ -1485,6 +1493,7 @@ async function routes(browser, name, viewport) {
     // Back with the win dialog open closes it and goes back.
     await page.goBack();
     await expectAt("Back with the win dialog open", { url: "/#/past", screen: "past", dialog: false });
+    await expectPastFocus(page, name, "Back to Past puzzles with the win dialog open", pastDate);
     await page.goForward();
     await expectAt("Forward to the solved past puzzle", { url: `/#/puzzle/${pastDate}`, screen: pastScreen, dialog: false });
     await expectSolved(page, name, "past puzzle opened by Forward", `Solved in ${past.par} moves, par ${past.par}`, "Past puzzles");
@@ -1523,6 +1532,170 @@ async function routes(browser, name, viewport) {
     await p.close();
   }
   console.log(`${name}: ${bad.length} bad links open today's puzzle at "/" with the URL replaced`);
+}
+
+// Where focus is on Past puzzles: the entry for `date`, or the heading when `date` is null (lab#41).
+async function expectPastFocus(page, name, label, date) {
+  const got = await page.evaluate(() => {
+    const a = document.activeElement;
+    return a?.id === "archive-title" ? "heading" : a?.closest("#archive-list") ? a.getAttribute("href") : a ? `${a.tagName.toLowerCase()}#${a.id}` : "none";
+  });
+  const want = date ? `#/puzzle/${date}` : "heading";
+  if (got !== want) fail(`${name}: ${label}: focus should be on ${date ? `the entry ${want}` : "the list heading"}, is on ${got}`);
+}
+
+// ── Past puzzles links (lab#41) ────────────────────────────────────────────
+// Each entry is a real link that looks as the buttons did; a plain click is one
+// history entry, other clicks are the browser's (new tab); today's puzzle has
+// one address; Back to Past puzzles puts focus on the list.
+async function pastLinks(browser, name, viewport) {
+  // A whole context with the like API mocked, so tabs the links open never ask the live one.
+  const ctx = await browser.newContext({ viewport });
+  await mockLikes(ctx);
+  ctx.on("page", (p) => {
+    guard(p);
+    p.on("console", (m) => m.type() === "error" && fail(`${name}: console error: ${m.text()}`));
+    p.on("pageerror", (e) => fail(`${name}: page error: ${e.message}`));
+  });
+  const page = await ctx.newPage();
+  const todayTitle = `Puzzle ${level.id}`;
+  const dates = readdirSync(join(repo, "levels/daily")).map((f) => f.replace(".json", "")).filter((d) => d <= today).sort().reverse();
+  const pastDate = dates.find((d) => d < today);
+  if (!pastDate) return fail(`${name}: no puzzle before today to test with`);
+  const pastTitle = `Puzzle ${JSON.parse(readFileSync(join(repo, "levels/daily", `${pastDate}.json`), "utf8")).id}`;
+  const where = () => page.evaluate(() => ({
+    url: location.href.slice(location.origin.length),
+    title: document.title,
+    length: history.length,
+    screen: !document.querySelector<HTMLElement>(".play").hidden ? document.querySelector("#level-title").textContent : document.querySelector<HTMLElement>("#archive").hidden ? "none" : "past",
+    nav: document.querySelector<HTMLElement>("[data-nav][aria-current]")?.dataset.nav ?? null,
+  }));
+  const settle = (screen) => page.waitForFunction((screen) => {
+    const play = !document.querySelector<HTMLElement>(".play").hidden;
+    return screen === "past" ? !play && !document.querySelector<HTMLElement>("#archive").hidden : play && document.querySelector("#level-title").textContent === screen;
+  }, screen, { timeout: 3000 }).catch(() => {});
+  async function expectAt(label, want) {
+    await settle(want.screen);
+    const got = await where();
+    for (const k of Object.keys(want)) if (got[k] !== want[k]) fail(`${name}: ${label}: ${k} should be ${JSON.stringify(want[k])}, is ${JSON.stringify(got[k])}`);
+  }
+  const atToday = { url: "/", title: HOME_TITLE, screen: todayTitle, nav: "today" };
+
+  await page.goto(base, { waitUntil: "networkidle" });
+  await page.waitForSelector(".cell", { timeout: 8000 });
+  await page.click('[data-nav="today"]');
+  await settle(todayTitle);
+  await page.click('[data-nav="archive"]');
+  await page.waitForSelector("#archive:not([hidden])");
+
+  // Every entry is a link to its puzzle, and nothing in the list is a button.
+  const list = await page.evaluate(() => ({
+    hrefs: [...document.querySelectorAll("#archive-list > li > *")].map((e) => (e.tagName === "A" ? e.getAttribute("href") : e.tagName)),
+    buttons: document.querySelectorAll("#archive-list button").length,
+    abs: document.querySelector<HTMLAnchorElement>("#archive-list a")?.href,
+  }));
+  const wantHrefs = dates.map((d) => `#/puzzle/${d}`);
+  if (JSON.stringify(list.hrefs) !== JSON.stringify(wantHrefs) || list.buttons) fail(`${name}: entries should be links ${JSON.stringify(wantHrefs)}, are ${JSON.stringify(list.hrefs)} (${list.buttons} buttons)`);
+  const absWant = new URL(`/#/puzzle/${dates[0]}`, base).href;
+  if (list.abs !== absWant) fail(`${name}: a copied entry link should be ${absWant}, is ${list.abs}`);
+
+  // They look as the buttons did: a full-width bordered row in the text colour,
+  // no underline, the hand cursor, the border darkening on hover and the focus
+  // ring by keyboard.
+  const link = page.locator(`#archive-list a[href="#/puzzle/${pastDate}"]`);
+  const look = () => link.evaluate((a) => {
+    const c = getComputedStyle(a);
+    return { display: c.display, border: `${c.borderTopWidth} ${c.borderTopStyle}`, radius: c.borderTopLeftRadius, underline: c.textDecorationLine, cursor: c.cursor,
+      borderColor: c.borderTopColor, outline: `${c.outlineWidth} ${c.outlineStyle}`, color: c.color, bodyColor: getComputedStyle(document.body).color,
+      width: a.getBoundingClientRect().width, li: a.parentElement.getBoundingClientRect().width };
+  });
+  // Buttons' 1.5px border and 2.5px ring, as this screen rounds them (a nav button's).
+  const buttonBorder = await page.evaluate(() => `${getComputedStyle(document.querySelector("[data-nav]")).borderTopWidth} solid`);
+  await page.mouse.move(0, 0);
+  const rest = await look();
+  if (rest.display !== "flex" || rest.border !== buttonBorder || rest.radius !== "10px" || rest.underline !== "none" || rest.cursor !== "pointer" || rest.color !== rest.bodyColor || Math.abs(rest.width - rest.li) > 0.5)
+    fail(`${name}: an entry should look like the old button row (border ${buttonBorder}), got ${JSON.stringify(rest)}`);
+  await link.hover();
+  const hover = await look();
+  if (hover.borderColor === rest.borderColor) fail(`${name}: an entry's border should darken on hover (${rest.borderColor})`);
+  await page.mouse.move(0, 0);
+  await page.locator('[data-nav="archive"]').focus();
+  for (let i = 0; i < 8 && !(await link.evaluate((a) => a === document.activeElement)); i++) await page.keyboard.press("Tab");
+  const ring = await look();
+  await page.locator('[data-nav="archive"]').focus();
+  await page.keyboard.press("Shift+Tab");
+  await page.keyboard.press("Tab");
+  const navRing = await page.evaluate(() => { const c = getComputedStyle(document.activeElement); return `${c.outlineWidth} ${c.outlineStyle}`; });
+  if (ring.outline !== navRing || !ring.outline.endsWith("solid")) fail(`${name}: a keyboard-focused entry should show the buttons' focus ring (${navRing}), got ${ring.outline}`);
+  await page.screenshot({ path: join(out, `${name}-past-puzzles.png`) });
+
+  // Middle click and Cmd/Ctrl click open the puzzle in a new tab, and leave this one as it is.
+  const before = await where();
+  for (const how of [{ button: "middle" }, { modifiers: ["ControlOrMeta"] }]) {
+    const label = how.button ? "middle click" : "Cmd/Ctrl click";
+    const [tab] = await Promise.all([ctx.waitForEvent("page", { timeout: 4000 }).catch(() => null), link.click(how)]);
+    if (!tab) { fail(`${name}: a ${label} on an entry should open a new tab`); continue; }
+    await tab.waitForLoadState("networkidle");
+    await tab.waitForFunction((t) => !document.querySelector<HTMLElement>(".play").hidden && document.querySelector("#level-title").textContent === t, pastTitle, { timeout: 4000 }).catch(() => {});
+    const opened = await tab.evaluate(() => ({ url: location.href.slice(location.origin.length), screen: document.querySelector("#level-title").textContent }));
+    if (opened.url !== `/#/puzzle/${pastDate}` || opened.screen !== pastTitle) fail(`${name}: a ${label} should open ${pastTitle} at /#/puzzle/${pastDate} in the new tab, opened ${JSON.stringify(opened)}`);
+    await tab.close();
+    const after = await where();
+    if (JSON.stringify(after) !== JSON.stringify(before)) fail(`${name}: a ${label} should leave this tab on Past puzzles, got ${JSON.stringify(after)} from ${JSON.stringify(before)}`);
+  }
+
+  // Today's entry: a plain click is one history entry, at the bare URL, with the home title and Today marked.
+  await page.locator(`#archive-list a[href="#/puzzle/${today}"]`).click();
+  await expectAt("today's entry", { ...atToday, length: before.length + 1 });
+  // Back to the list: focus on today's entry.
+  await page.goBack();
+  await expectAt("Back from today's puzzle", { url: "/#/past", screen: "past", nav: "archive" });
+  await expectPastFocus(page, name, "Back to Past puzzles from today's puzzle", today);
+  // A past entry by keyboard (Enter), then Back: focus on that entry.
+  await link.focus();
+  await page.keyboard.press("Enter");
+  await expectAt("a past entry by Enter", { url: `/#/puzzle/${pastDate}`, screen: pastTitle, nav: "archive", length: before.length + 1 });
+  await page.goBack();
+  await expectAt("Back from a past puzzle", { url: "/#/past", screen: "past" });
+  await expectPastFocus(page, name, "Back to Past puzzles after Enter", pastDate);
+  // From a lesson there's no entry to return to: focus goes to the heading.
+  await page.click('[data-nav="learn"]');
+  await settle("Plates open doors");
+  await page.goBack();
+  await expectAt("Back from a lesson", { url: "/#/past", screen: "past" });
+  await expectPastFocus(page, name, "Back to Past puzzles from a lesson", null);
+  // Past puzzles by the nav leaves focus on the nav.
+  await page.click('[data-nav="archive"]');
+  await settle("past");
+  if ((await page.evaluate(() => (document.activeElement as HTMLElement)?.dataset.nav)) !== "archive") fail(`${name}: Past puzzles by the nav should leave focus on the nav`);
+
+  // #/puzzle/<today> typed in place is today too, replacing itself (Back is Past puzzles).
+  await page.evaluate((h) => { location.hash = h; }, `#/puzzle/${today}`);
+  await expectAt(`#/puzzle/${today} typed in place`, atToday);
+  await page.goBack();
+  await expectAt(`Back from #/puzzle/${today} typed in place`, { url: "/#/past", screen: "past" });
+
+  // Opened directly by a returning player: today's puzzle, the URL replaced.
+  const direct = await ctx.newPage();
+  const blank = await direct.evaluate(() => history.length);
+  await direct.goto(new URL(`/#/puzzle/${today}`, base).href, { waitUntil: "networkidle" });
+  await direct.waitForFunction((t) => !document.querySelector<HTMLElement>(".play").hidden && document.querySelector("#level-title").textContent === t, todayTitle, { timeout: 3000 }).catch(() => {});
+  const got = await direct.evaluate(() => ({ url: location.href.slice(location.origin.length), title: document.title, screen: document.querySelector("#level-title").textContent, nav: document.querySelector<HTMLElement>("[data-nav][aria-current]")?.dataset.nav, length: history.length }));
+  const wantDirect = { ...atToday, length: blank + 1 };
+  if (JSON.stringify(got) !== JSON.stringify(wantDirect)) fail(`${name}: #/puzzle/${today} opened directly should be ${JSON.stringify(wantDirect)}, got ${JSON.stringify(got)}`);
+  await ctx.close();
+
+  // Opened by a newcomer: the first lesson, as the bare URL gives them.
+  const newcomer = await newPage(browser, { viewport });
+  newcomer.on("console", (m) => m.type() === "error" && fail(`${name}: newcomer: console error: ${m.text()}`));
+  newcomer.on("pageerror", (e) => fail(`${name}: newcomer: page error: ${e.message}`));
+  await newcomer.goto(new URL(`/#/puzzle/${today}`, base).href, { waitUntil: "networkidle" });
+  await newcomer.waitForFunction(() => !document.querySelector<HTMLElement>(".play").hidden && document.querySelector<HTMLElement>("#level-sub").textContent === "Lesson 1 of 5", null, { timeout: 3000 }).catch(() => {});
+  const fresh = await newcomer.evaluate(() => ({ url: location.href.slice(location.origin.length), title: document.title, sub: document.querySelector<HTMLElement>("#level-sub").textContent }));
+  const wantFresh = { url: "/#/learn/1", title: "Afterstep · Lesson 1", sub: "Lesson 1 of 5" };
+  if (JSON.stringify(fresh) !== JSON.stringify(wantFresh)) fail(`${name}: a newcomer opening #/puzzle/${today} should get the first lesson like the bare URL, ${JSON.stringify(wantFresh)}, got ${JSON.stringify(fresh)}`);
+  await newcomer.close();
+  console.log(`${name}: entries are links; middle and Cmd/Ctrl click open new tabs; #/puzzle/${today} is "/"; Back focuses the entry or the heading`);
 }
 
 // ── Level loading (lab#40) ─────────────────────────────────────────────────
@@ -1618,7 +1791,7 @@ async function levelLoad(browser, name, viewport) {
   await page.route(daily, (r) => { hits++; netExpected++; return r.abort("internetdisconnected"); });
   await page.click('[data-nav="archive"]');
   await page.waitForSelector("#archive:not([hidden])");
-  await page.locator("#archive-list button").filter({ hasText: new RegExp(`^Puzzle ${past.id}\\b`) }).click();
+  await page.locator("#archive-list a").filter({ hasText: new RegExp(`^Puzzle ${past.id}\\b`) }).click();
   let s = await expectFailed("offline");
   if (s && s.focus !== "retry") fail(`${name}: offline: a puzzle picked from Past puzzles should leave focus on Retry, is on "${s.focus}"`);
   if (s && (s.url !== `/#/puzzle/${pastDate}` || s.nav !== "archive")) fail(`${name}: offline: the URL and nav should name the puzzle asked for, got ${JSON.stringify(s)}`);
@@ -1730,6 +1903,7 @@ async function levelLoad(browser, name, viewport) {
 const browser = await chromium.launch({ executablePath: browserPath });
 try {
   await routes(browser, "routes", { width: 1280, height: 900 });
+  await pastLinks(browser, "past-links", { width: 1280, height: 900 });
   await levelLoad(browser, "level-load", { width: 1280, height: 900 });
   await likesFlow(browser);
   await likeTabs(browser);

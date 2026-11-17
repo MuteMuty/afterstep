@@ -439,15 +439,22 @@ button.hinted { border-color: var(--sun); box-shadow: 0 0 0 3px var(--sun-glow);
 
 /* ---------- archive ---------- */
 .archive h1 { font-family: var(--font-display); font-weight: 400; text-align: center; }
+/* Focused only by the page (Back from a puzzle with no entry to return to), so no ring. */
+.archive h1:focus { outline: none; }
 .archive ol { list-style: none; padding: 0; margin: 0; display: grid; gap: 0.4rem; }
-.archive li button {
+/* Entries are links (lab#41) dressed as the buttons they were. */
+.archive li a {
   width: 100%;
   display: flex;
   justify-content: space-between;
+  border: 1.5px solid var(--line);
   border-radius: var(--radius);
   padding: 0.7rem 1rem;
   text-align: left;
+  text-decoration: none;
+  touch-action: manipulation;
 }
+.archive li a:hover { border-color: var(--ink-dim); }
 .archive .meta { color: var(--ink-dim); font-variant-numeric: tabular-nums; }
 .archive .done { color: var(--sun); }
 .archive .done > span { white-space: nowrap; }

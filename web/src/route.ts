@@ -3,7 +3,8 @@
 // URL (old links keep working); everything else gets a hash:
 //   #/learn/2              lesson 2 (lessons count from 1 in the URL)
 //   #/past                 Past puzzles
-//   #/puzzle/2026-11-10    one day's puzzle, once it's out
+//   #/puzzle/2026-11-10    one day's puzzle, once it's out; today's date names
+//                          today's puzzle, so it opens at the bare URL (lab#41)
 
 export type Route =
   | { kind: "today" }
@@ -46,9 +47,26 @@ export function parseRoute(hash: string, ctx: RouteContext): Route | null {
   m = /^#\/puzzle\/(.+)$/.exec(hash);
   if (m) {
     const date = m[1];
-    return isDate(date) && date <= ctx.today && ctx.dates.includes(date) ? { kind: "puzzle", date } : null;
+    return isDate(date) && date <= ctx.today && ctx.dates.includes(date) ? puzzleRoute(date, ctx.today) : null;
   }
   return null;
+}
+
+/** The route for one day's puzzle: today's is today, which has one address, the bare URL. */
+export function puzzleRoute(date: string, today: string): Route {
+  return date === today ? { kind: "today" } : { kind: "puzzle", date };
+}
+
+/** The link a Past puzzles entry carries, today's included (lab#41). */
+export function puzzleHref(date: string): string {
+  return `#/puzzle/${date}`;
+}
+
+/** A click the page should handle itself: the main button with no modifier key.
+ *  Middle, Ctrl, Cmd, Shift and Alt clicks are left to the browser (new tab,
+ *  new window, download), so links behave as links. Enter on a link counts. */
+export function isPlainClick(e: { button: number; metaKey: boolean; ctrlKey: boolean; shiftKey: boolean; altKey: boolean; defaultPrevented: boolean }): boolean {
+  return e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey && !e.defaultPrevented;
 }
 
 /** The route's canonical hash: "" (the bare URL) for today's puzzle. */
