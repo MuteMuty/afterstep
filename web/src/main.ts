@@ -8,6 +8,8 @@ import {
   archiveParts, bestResult, countHint, hintText, hintsSeen, readSave, recordResult, resultLine, shareLine, total, winTitle,
   type Result,
 } from "./score";
+import { loadAnalytics, track } from "./analytics";
+import { events, playEvents, PROJECT, type Mode } from "./analytics-events";
 
 const UP = 0, DOWN = 1, LEFT = 2, RIGHT = 3, WAIT = 4;
 const DELTA: Record<number, [number, number]> = { 0: [0, -1], 1: [0, 1], 2: [-1, 0], 3: [1, 0], 4: [0, 0] };
@@ -73,6 +75,9 @@ let isToday = false;
 // Hints shown on this daily so far, each one a move in its result (lab#25).
 // Saved per puzzle, so leaving, a reload and Start over keep them. Lessons don't count hints.
 let hintsUsed = 0;
+// A move hint was shown on the puzzle on screen since it opened. Lessons don't count hints, but
+// play_finished still says whether one was used (lab#71).
+let hintedHere = false;
 let tutorialStep = 0;
 let game: WasmGame | null = null;
 let w = 0, h = 0, start = 0;
@@ -261,6 +266,7 @@ function showHint() {
     note(g.nudge());
   } else if (h >= 0 && h <= WAIT) {
     hintShownFor = here;
+    hintedHere = true;
     if (mode === "daily") {
       hintsUsed = countHint(save, level.date!);
       persist();
@@ -319,7 +325,9 @@ function act(a: number) {
     said = echoBump(tiles, w, echoFrom, hist[hist.length - 1 - level.delay]);
   }
   render(said);
+  plays.started(playMode(), playDay());
   if (game.won()) {
+    plays.finished(playMode(), playDay(), game.moves() + hintsUsed, hintsUsed > 0 || hintedHere);
     const g = game, token = screenToken;
     // Only celebrate if the same game is still on screen (the player may have
     // navigated away, or another puzzle may be on its way).
@@ -400,6 +408,7 @@ function loadLevel(l: Level) {
   game?.free();
   game = new WasmGame(l.grid.join("\n"), l.delay);
   hintsUsed = mode === "daily" ? hintsSeen(save, l.date!) : 0;
+  hintedHere = false;
   // Hints already counted stay counted (lab#25), but the nudge comes first again.
   nudged = false;
   // A daily solved before in this browser opens solved, from its saved best.
@@ -806,6 +815,13 @@ likeButtons.forEach((b, i) => {
   else b.onclick = press;
 });
 
+// ---------- usage events (lab#71) ----------
+// $pageview, then play_started on a puzzle's first move and play_finished on its solve, once each per
+// puzzle per page load, through the lab's shared script (see analytics.ts and analytics-events.ts).
+const plays = playEvents(track);
+const playMode = (): Mode => (mode === "learn" ? "tutorial" : isToday ? "daily" : "past");
+const playDay = () => (mode === "learn" ? String(level.id) : level.date!);
+
 // ---------- boot ----------
 // The index (dailies and lessons) and the engine. If either doesn't load, the
 // loading screen offers Retry, as for a puzzle (lab#40).
@@ -832,6 +848,8 @@ async function boot() {
   if (!likesLoaded) {
     likesLoaded = true;
     likes.load();
+    // The shared analytics script comes once the page is idle, and only where it may send.
+    loadAnalytics(PROJECT, events(index));
   }
 }
 board.tabIndex = 0;
