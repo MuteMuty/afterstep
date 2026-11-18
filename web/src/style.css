@@ -486,7 +486,7 @@ dialog h2 { font-family: var(--font-display); font-weight: 400; font-size: 2rem;
 .win-actions { display: flex; justify-content: center; gap: 0.5rem; margin-top: 1rem; }
 
 .foot { position: relative; text-align: center; color: var(--ink-dim); font-size: 0.85rem; padding: 1rem 1rem 1.5rem; }
-.foot p { max-width: 60ch; margin: 0 auto; }
+.foot p { max-width: 68ch; margin: 0 auto; }
 
 /* ---------- likes ---------- */
 /* A heart and the live count. The footer's is quiet and keeps the footer's line

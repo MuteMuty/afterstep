@@ -12,6 +12,7 @@ A few moves after you start, an **echo** of you appears and repeats everything y
 | `engine/src/bin/gen.rs` | CLI that generates each day's puzzle, proves it's solvable, proves it **can't** be solved without the echo, and records par (the optimal move count). |
 | `web/` (TypeScript, Vite) | A small, dependency-free front end: ~40 KB gzipped including the engine. |
 | `levels/` | Hand-made lessons and generated daily puzzles, all verified by the solver. |
+| `web/src/analytics*.ts` | Counts page views and puzzles started and finished through the lab's shared analytics script, with no cookies. The [privacy note](https://lab.brightloopapps.com/privacy) lists what's counted. |
 
 The solver searches states of (you, your echo, your last *k* moves): the echo's future is fully determined by those moves, so nothing else needs remembering. Hard puzzles explore 250k–400k states and still generate in about a second.
 

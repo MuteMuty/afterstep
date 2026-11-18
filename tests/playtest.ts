@@ -70,15 +70,37 @@
 // for each blocked request; Retry loads it once the network is back. Keys, the
 // d-pad and Hint during a slow load leave the old board alone (solved or not)
 // and nudge nothing; a slow load says so, a quick one shows no message.
+// Footer: a "Privacy" link to the lab's privacy note after Source, styled like
+// it, on screen and clickable in light and dark at phone and desktop widths;
+// the footer line stays one line at 1280px.
+// Usage events (lab#71): on localhost every page above already fails on any
+// request but Afterstep and the like API, so the shared script is never
+// fetched there. Under a made-up afterstep.*.brightloopapps.com host (answered
+// by the local server, the hub's script served from LAB_ANALYTICS_JS, PostHog
+// answered here so nothing reaches it): lesson 1 is won before a slow script
+// arrives, which loads only after the page has; winning it twice, today's puzzle
+// with a hint and Start over, and a past puzzle send exactly $pageview and one
+// play_started and play_finished per puzzle, with only allow-listed, bucketed
+// properties, no person properties, addresses without # or ?, marked cookieless,
+// and no cookies or storage of analytics' own; the footer's Privacy link opens
+// the note. With Do Not Track, with Global Privacy Control and on a workers.dev
+// preview the script isn't fetched and PostHog isn't contacted; with the script
+// blocked the game plays with no console error of its own.
 //
 // Usage: node tests/playtest.ts <baseUrl>
 // Env:   PLAYTEST_BROWSER  Chromium-based browser executable (default: Brave)
 //        PLAYTEST_OUT      screenshot folder (default: ./playtest-out)
+//        LAB_ANALYTICS_JS  the hub's built shared analytics script (default: the lab
+//                          checkout's hub/public/analytics/v1.js; build it there with
+//                          `npm run bundle`). The live one is never loaded.
 // Exit:  0 = pass, 1 = fail (reasons printed)
 import { chromium } from "playwright";
 import { readFileSync, readdirSync, mkdirSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { join, dirname } from "node:path";
+import { homedir } from "node:os";
+import { gunzipSync } from "node:zlib";
+import { movesBucket } from "../web/src/analytics-events.ts";
 
 const base = process.argv[2];
 if (!base) {
@@ -1919,6 +1941,224 @@ async function levelLoad(browser, name, viewport) {
   await phone.close();
 }
 
+// ── Footer: the privacy note (lab#71) ───────────────────────────────────────
+const PRIVACY = `${LAB}/privacy`;
+async function footerPrivacy(browser) {
+  for (const [name, viewport] of [["desktop", { width: 1280, height: 900 }], ["phone", { width: 390, height: 844 }]] as const) {
+    for (const colorScheme of ["light", "dark"] as const) {
+      const label = `footer ${name}-${colorScheme}`;
+      const page = await newPage(browser, { viewport, colorScheme });
+      page.on("console", (m) => m.type() === "error" && fail(`${label}: console error: ${m.text()}`));
+      page.on("pageerror", (e) => fail(`${label}: page error: ${e.message}`));
+      await page.goto(base, { waitUntil: "networkidle" });
+      await page.waitForSelector(".cell", { timeout: 8000 }).catch(() => fail(`${label}: board never rendered`));
+      const f = await page.evaluate((href) => {
+        const link = document.querySelector<HTMLAnchorElement>(`.foot a[href="${href}"]`);
+        if (!link) return null;
+        link.scrollIntoView({ block: "center" });
+        const source = link.previousElementSibling as HTMLElement | null;
+        const r = link.getBoundingClientRect();
+        const style = (e: Element) => { const s = getComputedStyle(e); return `${s.color} ${s.textDecorationLine} ${s.fontSize}`; };
+        return {
+          text: link.textContent, source: source?.textContent, last: link === link.parentElement.lastElementChild,
+          line: link.parentElement.textContent.replace(/\s+/g, " ").trim(),
+          hit: document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) === link,
+          inside: r.left >= 0 && r.right <= innerWidth && r.width > 0, wide: document.documentElement.scrollWidth > innerWidth,
+          same: source ? style(link) === style(source) : false,
+          oneLine: Math.round(r.top) === Math.round(link.parentElement.querySelector("a").getBoundingClientRect().top),
+        };
+      }, PRIVACY);
+      if (!f) fail(`${label}: no Privacy link to ${PRIVACY}`);
+      else {
+        if (f.text !== "Privacy" || f.source !== "Source" || !f.last) fail(`${label}: the footer should end "Source Privacy", got "${f.line}"`);
+        if (!f.line.includes("Made by Erik Pahor at BrightLoop Lab. Source Privacy")) fail(`${label}: footer reads "${f.line}"`);
+        if (!f.hit || !f.inside || f.wide) fail(`${label}: the Privacy link should be on screen and clickable, got ${JSON.stringify(f)}`);
+        if (!f.same) fail(`${label}: the Privacy link should look like the Source link`);
+        if (name === "desktop" && !f.oneLine) fail(`${label}: the footer line should stay on one line at ${viewport.width}px`);
+      }
+      await page.locator(".foot").screenshot({ path: join(out, `${label.replace(" ", "-")}.png`) });
+      await page.close();
+    }
+  }
+  console.log("footer: Privacy link after Source, on screen and styled like it, light and dark at 1280 and 390px, one line at 1280px");
+}
+
+// ── Usage events (lab#71) ───────────────────────────────────────────────────
+const ANALYTICS_JS = process.env.LAB_ANALYTICS_JS || join(homedir(), "brightloop-lab/lab/hub/public/analytics/v1.js");
+const OWN_KEYS = ["afterstep:v1", "afterstep:like"]; // Afterstep's own save and like receipt, the only things it keeps
+
+/** What posthog sent in one request: a list of events. */
+function decodeEvents(body) {
+  if (!body?.length) return [];
+  let text = body[0] === 0x1f ? gunzipSync(body).toString() : body.toString();
+  if (text.startsWith("data=")) text = Buffer.from(decodeURIComponent(text.slice(5)), "base64").toString();
+  const v = JSON.parse(text);
+  return Array.isArray(v) ? v : v.batch ?? [v];
+}
+
+async function analyticsFlow(browser) {
+  let script;
+  try { script = readFileSync(ANALYTICS_JS); } catch {
+    fail(`analytics: no shared script at ${ANALYTICS_JS}: build it in the lab's hub with npm run bundle, or set LAB_ANALYTICS_JS`);
+    return;
+  }
+  // posthog skips automated browsers, so the browser has to look like a person's.
+  const probe = await browser.newPage();
+  const userAgent = (await probe.evaluate(() => navigator.userAgent)).replace("HeadlessChrome", "Chrome");
+  await probe.close();
+  const d = new Date(now);
+  d.setDate(d.getDate() - 1);
+  const pastDate = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const past = JSON.parse(readFileSync(join(repo, "levels/daily", `${pastDate}.json`), "utf8"));
+  const lesson1 = JSON.parse(readFileSync(join(repo, "levels/tutorial/1.json"), "utf8"));
+
+  /** Afterstep under `host`, with the hub's script `scriptMode` ("ok", "slow" or "blocked"). `act` plays. */
+  const run = async (label, host, act, { dnt = null as string | null, gpc = false, scriptMode = "ok" } = {}) => {
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, colorScheme: "dark", userAgent });
+    await ctx.addInitScript(([dnt, gpc]) => {
+      Object.defineProperty(Navigator.prototype, "webdriver", { get: () => false });
+      Object.defineProperty(Navigator.prototype, "userAgentData", { get: () => undefined });
+      Object.defineProperty(Navigator.prototype, "doNotTrack", { get: () => dnt, configurable: true });
+      Object.defineProperty(Navigator.prototype, "globalPrivacyControl", { get: () => gpc, configurable: true });
+    }, [dnt, gpc] as const);
+    const r = { events: [], scripts: 0, hosts: new Set<string>(), page: null };
+    await ctx.route((u) => u.hostname === host, async (route) => {
+      const u = new URL(route.request().url());
+      await route.fulfill({ response: await route.fetch({ url: new URL(u.pathname + u.search, base).href }) });
+    });
+    await ctx.route(`${LAB}/**`, async (route) => {
+      const url = new URL(route.request().url());
+      if (url.pathname === "/analytics/v1.js") {
+        r.scripts++;
+        if (scriptMode === "blocked") return route.abort("blockedbyclient");
+        if (scriptMode === "slow") await new Promise((done) => setTimeout(done, 2500));
+        return route.fulfill({ contentType: "text/javascript", body: script });
+      }
+      if (url.pathname === "/privacy") return route.fulfill({ contentType: "text/html", body: "<!doctype html><title>Privacy</title><h1>Privacy</h1>" });
+      if (url.pathname === "/api/likes") return route.fulfill({ headers: { "access-control-allow-origin": `https://${host}` }, contentType: "application/json", body: JSON.stringify({ afterstep: { total: 3, week: 1 } }) });
+      fail(`${label}: the page asked ${url.href}`);
+      return route.abort();
+    });
+    await ctx.route((u) => /(^|\.)posthog\.com$/.test(u.hostname), async (route) => {
+      const req = route.request();
+      if (new URL(req.url()).hostname !== "eu.i.posthog.com") { fail(`${label}: analytics contacted ${req.url()}`); return route.abort(); }
+      try { r.events.push(...decodeEvents(req.postDataBuffer())); } catch (e) { fail(`${label}: couldn't read what analytics sent to ${req.url()}: ${e.message}`); }
+      await route.fulfill({ status: 200, contentType: "application/json", body: '{"status":"Ok"}' });
+    });
+    const page = r.page = await ctx.newPage();
+    page.on("request", (q) => { const u = new URL(q.url()); if (u.protocol.startsWith("http")) r.hosts.add(u.hostname); });
+    // A blocked script shows up as the browser's own network line; anything else is ours.
+    page.on("console", (m) => m.type() === "error" && !(scriptMode === "blocked" && /Failed to load resource/.test(m.text())) && fail(`${label}: console error: ${m.text()}`));
+    page.on("pageerror", (e) => fail(`${label}: page error: ${e.message}`));
+    await page.goto(`https://${host}/`, { waitUntil: "load" });
+    if (!(await page.waitForSelector(".cell", { timeout: 8000 }).catch(() => null))) fail(`${label}: board never rendered`);
+    else await act(page, r);
+    const kept = await page.evaluate(() => ({ local: Object.keys(localStorage), session: Object.keys(sessionStorage) }));
+    for (const k of kept.local.filter((k) => !OWN_KEYS.includes(k))) fail(`${label}: analytics left localStorage "${k}"`);
+    for (const k of kept.session) fail(`${label}: analytics left sessionStorage "${k}"`);
+    for (const c of await ctx.cookies()) fail(`${label}: analytics left cookie "${c.name}" on ${c.domain}`);
+    const allowedHosts = new Set([host, new URL(LAB).hostname, ...(scriptMode !== "blocked" && !dnt && !gpc && host.endsWith(".brightloopapps.com") ? ["eu.i.posthog.com"] : [])]);
+    for (const h of r.hosts) if (!allowedHosts.has(h)) fail(`${label}: the page contacted ${h}`);
+    await ctx.close();
+    return r;
+  };
+  const won = async (page, label, what) => {
+    if (!(await dialogOpens(page))) fail(`${label}: ${what} not solved`);
+    await page.keyboard.press("Escape");
+  };
+  const scriptLoaded = (page) => page.evaluate(() => performance.getEntriesByType("resource").some((e) => e.name.endsWith("/analytics/v1.js")));
+  /** Lesson 1, won as a newcomer starts. */
+  const lessonOne = async (page, label) => {
+    if ((await page.textContent("#level-title")) !== lesson1.name) fail(`${label}: a newcomer should start with lesson 1`);
+    await play(page, "RRRRR");
+    await won(page, label, "lesson 1");
+  };
+
+  // Production: lesson 1 twice, today's puzzle with a hint and Start over, and yesterday's.
+  const host = "afterstep.playtest.brightloopapps.com";
+  const prod = await run("analytics production", host, async (page, r) => {
+    const label = "analytics production";
+    await lessonOne(page, label);
+    if (await scriptLoaded(page)) fail(`${label}: lesson 1 should be won before the slow analytics script arrives`);
+    // Undo out of the solve, Start over, and win it again: nothing new.
+    await page.keyboard.press("KeyZ");
+    await page.keyboard.press("KeyR");
+    await play(page, "RR");
+    await page.keyboard.press("KeyZ");
+    await play(page, "RRRR");
+    await won(page, label, "lesson 1 again");
+    if (!(await page.waitForFunction(() => performance.getEntriesByType("resource").some((e) => e.name.endsWith("/analytics/v1.js")), null, { timeout: 8000 }).catch(() => null)))
+      fail(`${label}: the analytics script never loaded`);
+    const t = await page.evaluate(() => {
+      const nav = performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming;
+      return { loaded: nav.loadEventEnd, started: performance.getEntriesByType("resource").find((e) => e.name.endsWith("/analytics/v1.js"))?.startTime };
+    });
+    if (!(t.started >= t.loaded)) fail(`${label}: analytics started at ${Math.round(t.started)} ms, before the page loaded at ${Math.round(t.loaded)} ms`);
+    // Today's puzzle: the nudge, a counted hint, three moves, Start over, then its solution.
+    await page.click('[data-nav="today"]');
+    await page.waitForFunction((t) => document.querySelector("#level-title").textContent === t, `Puzzle ${level.id}`);
+    await page.keyboard.press("KeyH");
+    await page.keyboard.press("KeyH");
+    await play(page, level.solution.slice(0, 3));
+    await page.keyboard.press("KeyR");
+    await play(page, level.solution);
+    await won(page, label, "today's puzzle");
+    // Yesterday's, from its link.
+    await page.evaluate((d) => { location.hash = `#/puzzle/${d}`; }, pastDate);
+    await page.waitForFunction((t) => document.querySelector("#level-title").textContent === t, `Puzzle ${past.id}`);
+    await play(page, past.solution);
+    await won(page, label, "yesterday's puzzle");
+    await page.waitForTimeout(1500);
+    // The footer's Privacy link opens the note.
+    await Promise.all([page.waitForURL(PRIVACY, { timeout: 5000 }).catch(() => fail(`${label}: the footer's Privacy link didn't open ${PRIVACY}`)), page.click(`.foot a[href="${PRIVACY}"]`)]);
+  }, { scriptMode: "slow" });
+  const want = [
+    ["$pageview", {}],
+    ["play_started", { mode: "tutorial", day: lesson1.id }],
+    ["play_finished", { mode: "tutorial", day: lesson1.id, moves_bucket: movesBucket(5), hinted: false }],
+    ["play_started", { mode: "daily", day: today }],
+    ["play_finished", { mode: "daily", day: today, moves_bucket: movesBucket(level.solution.length + 1), hinted: true }],
+    ["play_started", { mode: "past", day: pastDate }],
+    ["play_finished", { mode: "past", day: pastDate, moves_bucket: movesBucket(past.solution.length), hinted: false }],
+  ] as const;
+  const ours = (e) => Object.fromEntries(Object.entries(e.properties ?? {}).filter(([k]) => !k.startsWith("$") && !["token", "distinct_id", "project"].includes(k)));
+  const seen = prod.events.map((e) => `${e.event} ${JSON.stringify(ours(e))}`).sort();
+  const wanted = want.map(([n, p]) => `${n} ${JSON.stringify(p)}`).sort();
+  if (seen.join("\n") !== wanted.join("\n")) fail(`analytics production: sent\n    ${seen.join("\n    ")}\n  want\n    ${wanted.join("\n    ")}`);
+  for (const e of prod.events) {
+    if (e.properties?.project !== "afterstep") fail(`analytics production: ${e.event} is for project ${e.properties?.project}`);
+    if (e.$set || e.$set_once || e.properties?.$set || e.properties?.$set_once) fail(`analytics production: ${e.event} set person properties`);
+    if (/[?#]/.test(e.properties?.$current_url ?? "")) fail(`analytics production: ${e.event} sent ${e.properties.$current_url}`);
+    if (e.properties?.$cookieless_mode !== true) fail(`analytics production: ${e.event} isn't marked cookieless`);
+  }
+  if (prod.events[0]?.event !== "$pageview") fail(`analytics production: the first event is ${prod.events[0]?.event}, not $pageview`);
+  console.log(`analytics production: ${prod.events.map((e) => e.event).join(", ")}; lesson 1 won before the script arrived; no cookies or storage`);
+
+  // Do Not Track, Global Privacy Control, a workers.dev preview: no script, nothing sent.
+  for (const [label, h, opts] of [
+    ["analytics do not track", host, { dnt: "1" }],
+    ["analytics global privacy control", host, { gpc: true }],
+    ["analytics workers.dev", "afterstep.playtest.workers.dev", {}],
+  ] as const) {
+    const quiet = await run(label, h, async (page) => {
+      await lessonOne(page, label);
+      await page.waitForTimeout(3500); // past the idle timeout, when the script would have been added
+    }, opts);
+    if (quiet.scripts) fail(`${label}: the page fetched the analytics script`);
+    if (quiet.events.length || quiet.hosts.has("eu.i.posthog.com")) fail(`${label}: analytics sent ${quiet.events.map((e) => e.event).join(", ")}`);
+  }
+
+  // The script blocked (an ad blocker, say): the game plays, the events just wait in the queue.
+  const blocked = await run("analytics script blocked", host, async (page) => {
+    await lessonOne(page, "analytics script blocked");
+    await page.waitForTimeout(3500);
+    const q = await page.evaluate(() => { const q = window.labAnalytics?.queue; return Array.isArray(q) ? q.map((e) => e[0]) : null; });
+    if (q?.join() !== "play_started,play_finished") fail(`analytics script blocked: queued ${JSON.stringify(q)}, want play_started and play_finished`);
+  }, { scriptMode: "blocked" });
+  if (blocked.scripts !== 1 || blocked.events.length) fail(`analytics script blocked: ${blocked.scripts} script requests, ${blocked.events.length} events`);
+  console.log("analytics: no script and nothing sent with Do Not Track, GPC or on workers.dev; harmless when blocked");
+}
+
 const browser = await chromium.launch({ executablePath: browserPath });
 try {
   await routes(browser, "routes", { width: 1280, height: 900 });
@@ -1926,6 +2166,8 @@ try {
   await levelLoad(browser, "level-load", { width: 1280, height: 900 });
   await likesFlow(browser);
   await likeTabs(browser);
+  await footerPrivacy(browser);
+  await analyticsFlow(browser);
   await keyboardStart(browser, "desktop-dark", { width: 1280, height: 900 });
   await keysHint(browser, "keys-hint");
   await session(browser, "desktop-dark", { width: 1280, height: 900 }, "dark");
