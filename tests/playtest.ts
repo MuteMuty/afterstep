@@ -36,6 +36,11 @@
 // d-pad must be on screen without scrolling in every lesson and today's
 // puzzle; so too at 320x568 and in landscape (844x390, 667x375, board beside
 // the controls), also late in today's puzzle with the board's size unchanged.
+// Laptops (lab#48): at 1280x700 and 1366x650 without touch, the board, status
+// line, controls and keys hint are on screen in every lesson, today's puzzle
+// and the largest past puzzle, light and dark, with cells of 40px or more; at
+// 1280x520 cells stay at 40px or more and the page scrolls instead; at 1280x900
+// the board keeps its usual size.
 // Nudges (lab#29): at each of those sizes today's nudge, shown by tapping Hint,
 // and every lesson's and daily's nudge (from the engine build the page uses)
 // fit the status line on one line with room to spare.
@@ -117,6 +122,12 @@ const pad = (n) => String(n).padStart(2, "0");
 const now = new Date();
 const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 const level = JSON.parse(readFileSync(join(repo, "levels/daily", `${today}.json`), "utf8"));
+// The past puzzle with the most rows (the earliest of those), for the laptop fit (lab#48).
+const LARGEST = readdirSync(join(repo, "levels/daily")).filter((f) => /^\d{4}-\d{2}-\d{2}\.json$/.test(f) && f.slice(0, 10) < today).sort()
+  .map((f) => ({ date: f.slice(0, 10), rows: JSON.parse(readFileSync(join(repo, "levels/daily", f), "utf8")).grid.length }))
+  .reduce((a, b) => (b.rows > a.rows ? b : a));
+// On a laptop, cells never shrink below this (lab#48).
+const LAPTOP_CELL = 40;
 
 // Every lesson's and daily's nudge, from the engine build the page is served from.
 const nudges = await (async () => {
@@ -894,19 +905,21 @@ async function oldSave(browser, name, viewport) {
 // that its tip reads as one balanced block. Its live regions say only news.
 const LESSONS = ["RRRRR", "RRLDDD", "RRRRLLLDUDDD", "RRLDDDDD", "RRLDDDDDR"];
 
-// The play screen's parts that must be on screen together on a phone (lab#10).
-const FIT = { board: "#board", status: ".status-row", controls: ".controls", dpad: ".dpad" };
-const playBoxes = (page) => page.evaluate((sel) => {
-  const out = { scrollY: window.scrollY, width: window.innerWidth, height: window.innerHeight };
+// The play screen's parts that must be on screen together on a phone (lab#10)
+// or laptop (lab#48): with touch the d-pad, without it the keys hint ("pad").
+const FIT = ["board", "status", "controls", "pad"];
+const padName = (touch) => (touch ? "d-pad" : "keys hint");
+const playBoxes = (page, touch = true) => page.evaluate((sel) => {
+  const out = { scrollY: window.scrollY, width: window.innerWidth, height: window.innerHeight, cell: document.querySelector(".cell").getBoundingClientRect().width };
   for (const [k, s] of Object.entries(sel)) {
     const b = document.querySelector(String(s)).getBoundingClientRect();
     out[k] = { left: b.left, top: b.top + window.scrollY, right: b.right, bottom: b.bottom + window.scrollY, width: b.width, height: b.height };
   }
   return out;
-}, FIT);
+}, { board: "#board", status: ".status-row", controls: ".controls", pad: touch ? ".dpad" : ".keys" });
 /** Fails unless every part of the play screen is inside the viewport at scroll 0. */
 function expectFits(name, label, at) {
-  for (const k of Object.keys(FIT)) {
+  for (const k of FIT) {
     const b = at[k];
     if (!b.height) fail(`${name}: ${label}: the ${k} isn't showing`);
     else if (b.top < -0.5 || b.left < -0.5 || b.bottom > at.height + 0.5 || b.right > at.width + 0.5)
@@ -926,17 +939,18 @@ async function lessons(browser, name, viewport, colorScheme, touch) {
     if (!touch) return page.keyboard.press(KEY[m]);
     await page.tap(m === "." ? "#wait" : `.dpad [data-move="${"UDLR".indexOf(m)}"]`);
   };
-  const layout = () => page.evaluate(() => {
+  // The d-pad with touch; without it the keys hint, as the d-pad is hidden.
+  const pad = padName(touch);
+  const layout = () => page.evaluate((touch) => {
     const r = (s) => document.querySelector(s).getBoundingClientRect();
     return {
-      board: r("#board"), dpad: r(".dpad"), wide: document.documentElement.scrollWidth > window.innerWidth,
+      board: r("#board"), pad: r(touch ? ".dpad" : ".keys"), wide: document.documentElement.scrollWidth > window.innerWidth,
       cell: r(".cell").width,
     };
-  });
-  // On a phone the board, status line, controls and d-pad fit the screen (lab#10).
+  }, touch);
+  // The board, status line, controls and d-pad or keys hint fit the screen (lab#10, lab#48).
   const fits = async (label) => {
-    if (!touch) return;
-    const at = await playBoxes(page);
+    const at = await playBoxes(page, touch);
     expectFits(name, label, at);
     return at;
   };
@@ -948,20 +962,20 @@ async function lessons(browser, name, viewport, colorScheme, touch) {
     const at = await layout();
     if (at.wide) fail(`${name}: lesson ${n} scrolls sideways`);
     const fit = await fits(`lesson ${n}`);
-    if (fit) console.log(`${name}: lesson ${n} fits, d-pad ends at ${Math.round(fit.dpad.bottom)}px of ${viewport.height}, cells ${at.cell.toFixed(1)}px`);
+    console.log(`${name}: lesson ${n} fits, ${pad} ends at ${Math.round(fit.pad.bottom)}px of ${viewport.height}, cells ${at.cell.toFixed(1)}px`);
     if (n === 4) {
       four = at;
       // Tips name plates in full, like the nudges (lab#29).
       if ((await page.textContent("#tip")) !== "You hold plate A yourself. Your echo holds plate B.") fail(`${name}: lesson 4 tip should name plate B in full, says "${await page.textContent("#tip")}"`);
     }
-    if (n < 5) lowest = Math.max(lowest, at.dpad.bottom);
+    if (n < 5) lowest = Math.max(lowest, at.pad.bottom);
     if (n === 5) {
       if ((await page.textContent("#level-title")) !== "Out of step") fail(`${name}: lesson 5 should be "Out of step"`);
       if ((await page.textContent("#tip")) !== "A closed door stops your echo. Keep it on plate B.") fail(`${name}: lesson 5 tip should explain the bump, naming plate B in full`);
-      if (at.board.right > viewport.width || at.board.left < 0 || at.dpad.right > viewport.width) fail(`${name}: lesson 5 board or d-pad is off screen`);
+      if (at.board.right > viewport.width || at.board.left < 0 || at.pad.right > viewport.width) fail(`${name}: lesson 5 board or ${pad} is off screen`);
       if (at.board.height !== four.board.height || at.cell !== four.cell) fail(`${name}: lesson 5 board (${at.board.height}px, cells ${at.cell}px) should match lesson 4's (${four.board.height}px, ${four.cell}px)`);
-      if (at.dpad.bottom > lowest + 0.5) fail(`${name}: lesson 5's d-pad ends at ${at.dpad.bottom}px, lower than any other lesson's (${lowest}px)`);
-      console.log(`${name}: lesson 5 board ${at.board.width}x${at.board.height}, d-pad ends at ${Math.round(at.dpad.bottom)}px of ${viewport.height} (lessons 1-4: ${Math.round(lowest)}px)`);
+      if (at.pad.bottom > lowest + 0.5) fail(`${name}: lesson 5's ${pad} ends at ${at.pad.bottom}px, lower than any other lesson's (${lowest}px)`);
+      console.log(`${name}: lesson 5 board ${at.board.width}x${at.board.height}, ${pad} ends at ${Math.round(at.pad.bottom)}px of ${viewport.height} (lessons 1-4: ${Math.round(lowest)}px)`);
       await page.screenshot({ path: join(out, `${name}-lesson5.png`) });
     }
     if (n === 5) {
@@ -1031,21 +1045,20 @@ async function lessons(browser, name, viewport, colorScheme, touch) {
   await page.waitForFunction(() => document.querySelector<HTMLElement>("#level-title").textContent.startsWith("Puzzle "), null, { timeout: 4000 })
     .catch(() => fail(`${name}: "Play today's puzzle" after lesson 5 did not open today's puzzle`));
   const fit = await fits("today's puzzle");
-  if (fit) {
-    console.log(`${name}: today's puzzle fits, d-pad ends at ${Math.round(fit.dpad.bottom)}px of ${viewport.height}`);
-    await page.screenshot({ path: join(out, `${name}-daily.png`) });
-  }
+  console.log(`${name}: today's puzzle fits, ${pad} ends at ${Math.round(fit.pad.bottom)}px of ${viewport.height}`);
+  await page.screenshot({ path: join(out, `${name}-daily.png`) });
   await page.close();
 }
 
 // Nudges (lab#29): tapping Hint on today's puzzle shows its nudge, and it and
 // every other level's nudge, put in the same place, fit the status line on one
 // line with 6% of it to spare (for wider system fonts), without moving the
-// d-pad or scrolling sideways.
-async function nudgesFit(page, name) {
-  const dpad = () => page.evaluate(() => document.querySelector<HTMLElement>(".dpad").getBoundingClientRect().top + window.scrollY);
+// d-pad (or keys hint) or scrolling sideways.
+async function nudgesFit(page, name, touch = true) {
+  const dpad = () => page.evaluate((s) => document.querySelector<HTMLElement>(s).getBoundingClientRect().top + window.scrollY, touch ? ".dpad" : ".keys");
   const before = await dpad();
-  await page.tap("#hint");
+  if (touch) await page.tap("#hint");
+  else await page.click("#hint");
   await page.waitForSelector("#hint-note:not([hidden])");
   const real = await page.textContent("#hint-note");
   if (real !== nudges[`daily/${today}`]) fail(`${name}: tapping Hint on today's puzzle should show its nudge "${nudges[`daily/${today}`]}", got "${real}"`);
@@ -1068,7 +1081,7 @@ async function nudgesFit(page, name) {
     if (r.lines !== 1 || !r.inside || r.wide || r.textW > sizes.statusW * 0.94)
       fail(`${name}: the nudge for ${r.key} "${r.text}" should fit one line with 6% to spare: ${Math.round(r.textW)}px of ${sizes.statusW}px (${r.lines} lines${r.wide ? ", page scrolls sideways" : ""})`);
   }
-  if ((await dpad()) !== before) fail(`${name}: today's nudge moved the d-pad`);
+  if ((await dpad()) !== before) fail(`${name}: today's nudge moved the ${padName(touch)}`);
   console.log(`${name}: ${sizes.rows.length} nudges fit; longest "${longest.text}" (${longest.key}) ${Math.round(longest.textW)}px of ${sizes.statusW}px`);
 }
 
@@ -1076,14 +1089,18 @@ async function nudgesFit(page, name) {
 // phone, shows the board, status line, controls and d-pad without scrolling,
 // and still does late in today's puzzle (once the echo follows), with the
 // board the same size. In landscape the board sits beside the controls.
-async function fitScreens(browser, name, viewport, colorScheme) {
-  const page = await newPage(browser, { viewport, colorScheme, hasTouch: true, isMobile: true });
+// Laptops (lab#48), without touch: the same with the keys hint, also in the
+// largest past puzzle, with cells of 40px or more.
+async function fitScreens(browser, name, viewport, colorScheme, touch = true) {
+  const page = await newPage(browser, { viewport, colorScheme, hasTouch: touch, isMobile: touch });
   page.on("console", (m) => m.type() === "error" && fail(`${name}: console error: ${m.text()}`));
   page.on("pageerror", (e) => fail(`${name}: page error: ${e.message}`));
-  const landscape = viewport.width > viewport.height;
+  const landscape = touch && viewport.width > viewport.height;
   // A returning player, so the bare URL opens today's puzzle rather than the lessons.
   await page.addInitScript(() => location.protocol.startsWith("http") && localStorage.setItem("afterstep:v1", JSON.stringify({ learned: true, results: {} })));
-  for (const [label, hash] of [...LESSONS.map((_, i) => [`lesson ${i + 1}`, `#/learn/${i + 1}`]), ["today's puzzle", ""]]) {
+  const screens = [...LESSONS.map((_, i) => [`lesson ${i + 1}`, `#/learn/${i + 1}`]), ["today's puzzle", ""]];
+  if (!touch) screens.push([`the largest past puzzle (${LARGEST.rows} rows)`, `#/puzzle/${LARGEST.date}`]);
+  for (const [label, hash] of screens) {
     await page.goto("about:blank");
     await page.goto(`${base}/${hash}`, { waitUntil: "networkidle" }).catch((e) => fail(`${name}: could not load ${base}/${hash}: ${e.message}`));
     if (!(await page.waitForSelector(".cell", { timeout: 8000 }).catch(() => null))) {
@@ -1091,22 +1108,25 @@ async function fitScreens(browser, name, viewport, colorScheme) {
       continue;
     }
     const sub = await page.textContent("#level-sub");
-    if (hash ? sub !== `Lesson ${hash.at(-1)} of 5` : !(await page.textContent("#level-title")).startsWith("Puzzle ")) fail(`${name}: ${hash || "/"} opened "${sub}"`);
-    const at = await playBoxes(page);
+    if (hash.startsWith("#/learn/") ? sub !== `Lesson ${hash.at(-1)} of 5` : !(await page.textContent("#level-title")).startsWith("Puzzle ")) fail(`${name}: ${hash || "/"} opened "${sub}"`);
+    const at = await playBoxes(page, touch);
     expectFits(name, label, at);
-    if (landscape && at.board.right > Math.min(at.controls.left, at.dpad.left) + 0.5) fail(`${name}: ${label}: the board should sit beside the controls`);
+    if (!touch && at.cell < LAPTOP_CELL - 0.5) fail(`${name}: ${label}: cells are ${at.cell.toFixed(1)}px, below ${LAPTOP_CELL}px`);
+    if (!touch) console.log(`${name}: ${label} fits, keys hint ends at ${Math.round(at.pad.bottom)}px of ${viewport.height}, cells ${at.cell.toFixed(1)}px`);
+    if (label.startsWith("the largest")) await page.screenshot({ path: join(out, `${name}-largest.png`) });
+    if (landscape && at.board.right > Math.min(at.controls.left, at.pad.left) + 0.5) fail(`${name}: ${label}: the board should sit beside the controls`);
     if (await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)) fail(`${name}: ${label} scrolls sideways`);
     if (label === "lesson 5") await page.screenshot({ path: join(out, `${name}-lesson5.png`) });
     if (!hash) {
       await page.screenshot({ path: join(out, `${name}-daily.png`) });
-      await nudgesFit(page, name);
+      await nudgesFit(page, name, touch);
       await play(page, level.solution.slice(0, -1));
       await page.waitForTimeout(200);
-      const late = await playBoxes(page);
+      const late = await playBoxes(page, touch);
       expectFits(name, "late in today's puzzle", late);
       if (Math.abs(late.board.height - at.board.height) > 0.5) fail(`${name}: the board changed size during today's puzzle (${at.board.height}px -> ${late.board.height}px)`);
       await page.screenshot({ path: join(out, `${name}-daily-late.png`) });
-      console.log(`${name}: everything fits; board ${Math.round(at.board.width)}x${Math.round(at.board.height)}, d-pad ends at ${Math.round(late.dpad.bottom)}px of ${viewport.height}`);
+      console.log(`${name}: everything fits; board ${Math.round(at.board.width)}x${Math.round(at.board.height)}, ${padName(touch)} ends at ${Math.round(late.pad.bottom)}px of ${viewport.height}`);
     }
   }
   if (landscape) {
@@ -1118,6 +1138,44 @@ async function fitScreens(browser, name, viewport, colorScheme) {
     if (!(await dialogOpens(page))) fail(`${name}: lesson 1 not solved by tapping Right five times`);
   }
   await page.close();
+}
+
+// Laptops (lab#48): in a window too short for 40px cells (1280x520) the
+// board stops shrinking there and the page scrolls; in a tall one (1280x900)
+// the board keeps its usual size, 52% of the window's height or 64px cells.
+async function laptopEdges(browser) {
+  for (const viewport of [{ width: 1280, height: 520 }, { width: 1280, height: 900 }]) {
+    const name = `laptop-${viewport.width}x${viewport.height}`;
+    const page = await newPage(browser, { viewport, colorScheme: "light" });
+    page.on("pageerror", (e) => fail(`${name}: page error: ${e.message}`));
+    await page.addInitScript(() => location.protocol.startsWith("http") && localStorage.setItem("afterstep:v1", JSON.stringify({ learned: true, results: {} })));
+    for (const [label, hash] of [["lesson 4", "#/learn/4"], ["today's puzzle", ""], [`the largest past puzzle (${LARGEST.rows} rows)`, `#/puzzle/${LARGEST.date}`]]) {
+      await page.goto("about:blank");
+      await page.goto(`${base}/${hash}`, { waitUntil: "networkidle" }).catch((e) => fail(`${name}: could not load ${base}/${hash}: ${e.message}`));
+      if (!(await page.waitForSelector(".cell", { timeout: 8000 }).catch(() => null))) {
+        fail(`${name}: board never rendered for ${label}`);
+        continue;
+      }
+      const at = await playBoxes(page, false);
+      const rows = await page.evaluate(() => Number(getComputedStyle(document.querySelector<HTMLElement>(".board-wrap")).getPropertyValue("--rows")));
+      if (viewport.height === 900) {
+        const usual = Math.min(64, (0.52 * viewport.height) / rows);
+        if (Math.abs(at.cell - usual) > 0.05) fail(`${name}: ${label}: cells should keep their usual ${usual.toFixed(1)}px, are ${at.cell.toFixed(1)}px`);
+        expectFits(name, label, at);
+        console.log(`${name}: ${label}: cells ${at.cell.toFixed(1)}px as usual, keys hint ends at ${Math.round(at.pad.bottom)}px of ${viewport.height}`);
+      } else {
+        if (at.cell < LAPTOP_CELL - 0.5) fail(`${name}: ${label}: cells shrank to ${at.cell.toFixed(1)}px, below ${LAPTOP_CELL}px`);
+        if (at.pad.bottom <= viewport.height) console.log(`${name}: ${label} fits with cells of ${at.cell.toFixed(1)}px`);
+        else {
+          const scrolls = await page.evaluate(() => document.documentElement.scrollHeight > window.innerHeight);
+          if (!scrolls) fail(`${name}: ${label}: the keys hint ends at ${Math.round(at.pad.bottom)}px but the page doesn't scroll`);
+          console.log(`${name}: ${label}: cells ${at.cell.toFixed(1)}px, the page scrolls to the keys hint at ${Math.round(at.pad.bottom)}px`);
+        }
+      }
+      if (label.startsWith("the largest")) await page.screenshot({ path: join(out, `${name}-largest.png`) });
+    }
+    await page.close();
+  }
 }
 
 // ── Likes (lab#17) ──────────────────────────────────────────────────────────
@@ -2179,8 +2237,12 @@ try {
   await lessons(browser, "phone-lessons-light", { width: 390, height: 844 }, "light", true);
   await lessons(browser, "phone-360-lessons-dark", { width: 360, height: 640 }, "dark", true);
   await lessons(browser, "phone-700-lessons-light", { width: 390, height: 700 }, "light", true);
+  await lessons(browser, "laptop-700-lessons-dark", { width: 1280, height: 700 }, "dark", false);
   for (const [w, h] of [[360, 640], [390, 700], [390, 844], [320, 568], [844, 390], [667, 375]])
     await fitScreens(browser, `fit-${w}x${h}`, { width: w, height: h }, w > h ? "dark" : "light");
+  for (const [w, h] of [[1280, 700], [1366, 650]])
+    for (const scheme of ["light", "dark"]) await fitScreens(browser, `laptop-fit-${w}x${h}-${scheme}`, { width: w, height: h }, scheme, false);
+  await laptopEdges(browser);
 } finally {
   await browser.close();
 }
