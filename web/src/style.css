@@ -370,24 +370,45 @@ button.hinted { border-color: var(--sun); box-shadow: 0 0 0 3px var(--sun-glow);
 .solved.bump .solved-text { animation: solved-flash 0.6s ease; }
 @keyframes solved-flash { 30% { color: var(--sun); } }
 
-/* ---------- phones ---------- */
-/* The header, board, status line, controls and d-pad fit the screen together:
-   the board takes the height that's left, down to a floor below which the page
-   scrolls instead. */
-@media (max-width: 600px) {
-  .screen:has(> main > .play:not([hidden])) { max-height: max(100dvh, 440px); }
+/* ---------- fitting the screen ---------- */
+/* The header, board, status line, controls and d-pad or keys hint fit the
+   screen together: the board takes the height that's left, down to a floor
+   below which the page scrolls instead. On phones, and on short laptop windows
+   (lab#48); taller windows always fit. Where everything fits, the board keeps
+   its usual size. Short landscape windows put the board beside the rest
+   instead (see "landscape phones"). */
+@media (max-width: 600px), (500px < height <= 860px) {
   main { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
   .play { flex: 0 1 auto; min-height: 0; display: flex; flex-direction: column; }
   .play[hidden] { display: none; }
   .play > * { flex: none; }
   .board-wrap { flex: 0 1 calc(var(--fit) * var(--rows) + 15px); min-height: 0; container-type: size; }
   .board { --size: min(var(--fit), (100cqh - 15px) / var(--rows)); }
+  /* Its auto margins would shrink it to its text here. */
+  .status-row { width: 100%; }
+}
+/* Laptops: cells stay at 40px or more. The floor is where an 8x8 board's
+   cells reach 40px, 80px higher with the d-pad, which is that much taller
+   than the keys hint. */
+@media (width > 600px) and (500px < height <= 860px) {
+  .board-wrap { --fit: min(calc((100vw - 2rem) / var(--cols)), max(40px, 52dvh / var(--rows)), 64px); }
+  .screen:has(> main > .play:not([hidden])) { max-height: max(100dvh, 650px); }
+  .touch .screen:has(> main > .play:not([hidden])) { max-height: max(100dvh, 730px); }
+  @media (pointer: coarse), (hover: none) {
+    .screen:has(> main > .play:not([hidden])) { max-height: max(100dvh, 730px); }
+  }
+  main:has(> .play:not([hidden])) { padding-bottom: 0.5rem; }
+}
+
+/* ---------- phones ---------- */
+@media (max-width: 600px) {
+  .screen:has(> main > .play:not([hidden])) { max-height: max(100dvh, 440px); }
   /* The status line never wraps (that would resize the board mid-game): its text
      shrinks to fit "Echo follows 4 moves behind" and "Moves 99 of par 16", and
      keeps the line's height. The longest hint nudge fits the same width. The vw
      line is for browsers without container units (the row is 100vw - 2rem wide
      here); without it they keep 16px and a 39-letter nudge overflows at 320px. */
-  .status-row { width: 100%; container-type: inline-size; }
+  .status-row { container-type: inline-size; }
   .status { font-size: min(1rem, (100vw - 2.5rem) / 23.5); font-size: min(1rem, (100cqi - 0.5rem) / 23.5); line-height: 1.5rem; gap: 0.5rem; }
 }
 @media (max-width: 380px) {
