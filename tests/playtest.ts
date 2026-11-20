@@ -44,7 +44,10 @@
 // Nudges (lab#29): at each of those sizes today's nudge, shown by tapping Hint,
 // and every lesson's and daily's nudge (from the engine build the page uses)
 // fit the status line on one line with room to spare.
-// Touch targets (nav, controls, d-pad) are at least 44px tall.
+// Touch targets (nav, controls, d-pad) are at least 44px tall; on a touch
+// phone so too (lab#49) the brand link, the footer's heart, and in lesson 1 and
+// today's puzzle Copy result and Next (Next lesson) in the win dialog and the
+// solved line, and the dialog's heart (also at least 44px wide).
 // Likes (lab#17): every page uses a mocked lab like API and may ask nothing but
 // Afterstep and that API. Liking shows at once, survives a reload and unlikes
 // with the stored receipt (also days later); the win dialog's heart, 409 and
@@ -483,6 +486,17 @@ async function keysHint(browser, name) {
   await fine.close();
 }
 
+/** Touch targets (lab#49): each of these is showing and at least 44px tall and wide. */
+async function expectTargets(page, name, label, sels) {
+  const small = await page.evaluate((sels) => sels.map((s) => {
+    const e = document.querySelector<HTMLElement>(s);
+    if (!e?.checkVisibility()) return `${s} isn't showing`;
+    const r = e.getBoundingClientRect();
+    return r.width < 44 || r.height < 44 ? `${s} "${e.textContent.trim()}" (${r.width.toFixed(1)}x${r.height.toFixed(1)}px)` : "";
+  }).filter(Boolean), sels);
+  if (small.length) fail(`${name}: ${label}: touch targets under 44px: ${small.join(", ")}`);
+}
+
 // Touch (phone): tapping controls works, keeps the page still, and leaves no
 // focus ring on the board.
 async function touchControls(browser, name, viewport) {
@@ -508,6 +522,8 @@ async function touchControls(browser, name, viewport) {
   const short = await page.evaluate(() => [...document.querySelectorAll<HTMLElement>(".top nav button, .controls button, .dpad button")]
     .filter((b) => b.offsetParent && b.getBoundingClientRect().height < 44).map((b) => `${b.textContent} (${b.getBoundingClientRect().height}px)`));
   if (short.length) fail(`${name}: touch targets under 44px tall: ${short.join(", ")}`);
+  await page.waitForSelector("#like-foot:not([hidden])", { timeout: 4000 }).catch(() => {});
+  await expectTargets(page, name, "header and footer", [".brand", "#like-foot"]);
   const withHint = await layout();
   await page.evaluate(() => (document.querySelector<HTMLElement>("#hint").style.display = "none"));
   const withoutHint = await layout();
@@ -583,8 +599,11 @@ async function touchControls(browser, name, viewport) {
     return page.close();
   }
   await expectNoSolved(page, name, "while the win dialog is open");
+  await page.waitForSelector("#win-like:not([hidden])", { timeout: 4000 }).catch(() => {});
+  await expectTargets(page, name, "today's win dialog", ["#share", "#next", "#like-win"]);
   await page.evaluate(() => document.querySelector<HTMLDialogElement>("#win").close());
   await expectSolved(page, name, "after the dialog closed", `Solved in ${level.par} moves, par ${level.par}`, "Past puzzles");
+  await expectTargets(page, name, "today's solved line", ["#solved-share", "#solved-next"]);
   const done = await box();
   if (!done.solved) fail(`${name}: no solved line on the phone`);
   else {
@@ -1015,9 +1034,12 @@ async function lessons(browser, name, viewport, colorScheme, touch) {
       // Close the dialog, then take the solved line's Next. On a phone, a fast
       // double-tap on it must not move in lesson 2: the d-pad comes back near
       // where Next was.
-      if (touch) await page.evaluate(() => document.querySelector<HTMLDialogElement>("#win").close());
-      else await page.keyboard.press("Escape");
+      if (touch) {
+        await expectTargets(page, name, `lesson ${n}'s win dialog`, ["#next"]);
+        await page.evaluate(() => document.querySelector<HTMLDialogElement>("#win").close());
+      } else await page.keyboard.press("Escape");
       await expectSolved(page, name, `lesson ${n}, after the dialog closed`, `Solved in ${sol.length} moves`, want, false);
+      if (touch) await expectTargets(page, name, `lesson ${n}'s solved line`, ["#solved-next"]);
       if (!touch) await page.click("#solved-next");
       else {
         await page.locator("#solved-next").scrollIntoViewIfNeeded();

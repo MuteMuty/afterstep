@@ -341,15 +341,20 @@ button.hinted { border-color: var(--sun); box-shadow: 0 0 0 3px var(--sun-glow);
   .keys-half { display: block; }
   .keys-join { display: none; }
 }
+/* Touch targets are 44px or more (lab#10, lab#49). A negative margin takes
+   back what the brand link grows, so nothing around it moves; so too the
+   footer's heart (see "likes"). */
 @media (pointer: coarse), (hover: none) {
   .dpad { display: grid; }
   .keys, .hint-key { display: none; }
-  .top nav button, .controls button, .load button { min-height: 44px; }
+  .top nav button, .controls button, .load button, .win-actions button, .win-like .like { min-height: 44px; }
+  .brand { display: flex; align-items: center; min-height: 44px; margin-block: calc(0.75em - 22px); }
 }
 /* Some touch screens report a fine pointer: main.ts marks the page on the first touch. */
 .touch .dpad { display: grid; }
 .touch .keys, .touch .hint-key { display: none; }
-.touch .top nav button, .touch .controls button, .touch .load button { min-height: 44px; }
+.touch .top nav button, .touch .controls button, .touch .load button, .touch .win-actions button, .touch .win-like .like { min-height: 44px; }
+.touch .brand { display: flex; align-items: center; min-height: 44px; margin-block: calc(0.75em - 22px); }
 
 /* ---------- solved line ---------- */
 /* Once solved (and the win dialog closed), the result takes the status line's
@@ -429,6 +434,12 @@ button.hinted { border-color: var(--sun); box-shadow: 0 0 0 3px var(--sun-glow);
   .keys { margin-top: 0.6rem; }
   .below .solved-actions { top: 0.5rem; }
   main { padding-bottom: 0.5rem; }
+  /* With touch the brand link reaches past its line (lab#49): where the nav
+     wraps below it, a gap keeps the two from overlapping. */
+  @media (pointer: coarse), (hover: none) {
+    .top { row-gap: calc(22px - 1.05rem); }
+  }
+  .touch .top { row-gap: calc(22px - 1.05rem); }
 }
 /* Landscape phones: the board on the left, everything else beside it. */
 @media (orientation: landscape) and (max-height: 500px) {
@@ -533,6 +544,11 @@ dialog h2 { font-family: var(--font-display); font-weight: 400; font-size: 2rem;
   color: var(--ink);
 }
 .foot .like:hover { border-color: var(--line); }
+/* With touch, a 44px target (lab#49), still on the footer's line. */
+@media (pointer: coarse), (hover: none) {
+  .foot .like { padding-block: 0.7rem; margin-block: calc(-0.7rem - 1.5px); }
+}
+.touch .foot .like { padding-block: 0.7rem; margin-block: calc(-0.7rem - 1.5px); }
 .win-like { margin: 1.1rem 0 0; color: var(--ink-dim); display: flex; align-items: center; justify-content: center; gap: 0.6rem; flex-wrap: wrap; }
 .win-like[hidden] { display: none; }
 .win-like .like { color: var(--ink); padding: 0.4rem 0.9rem 0.4rem 0.75rem; }
