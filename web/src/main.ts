@@ -5,7 +5,7 @@ import { isPlainClick, parseRoute, puzzleHref, puzzleRoute, routeHash, routeTitl
 import { boardNews, boardState, echoBump, type BoardState } from "./announce";
 import { fetchChecked, isIndex, isLevel, type Index, type Level } from "./levels";
 import {
-  archiveParts, bestResult, countHint, hintText, hintsSeen, readSave, recordResult, resultLine, shareLine, total, winTitle,
+  archiveParts, bestResult, countHint, hintsSeen, moveHintNote, readSave, recordResult, resultLine, shareLine, winParts, winTitle,
   type Result,
 } from "./score";
 import { loadAnalytics, track } from "./analytics";
@@ -278,7 +278,7 @@ function showHint() {
     els.hint.dataset.hint = String(h);
     els.hint.hidden = false;
     (h === WAIT ? $("wait") : document.querySelector(`.dpad [data-move="${h}"]`))?.classList.add("hinted");
-    note(`Hint: ${MOVE_WORDS[h]}.`);
+    note(moveHintNote(MOVE_WORDS[h], mode === "daily" ? hintsUsed : 0));
   } else if (h < 0) {
     const n = -h;
     const undo = document.createElement("button");
@@ -391,9 +391,12 @@ function onWin() {
     recordResult(save, level.date!, solved);
     persist();
     $("win-title").textContent = winTitle(solved, par);
-    const s = streak();
-    $("win-body").textContent =
-      `Puzzle ${level.id} in ${total(solved)} moves${hintText(solved.hints)}. Par is ${par}.` + (s > 1 ? ` You're on a ${s}-day streak.` : "");
+    // Phrases that each keep to one line (see style.css), with spaces between.
+    $("win-body").replaceChildren(...winParts(level.id, solved, par, streak()).flatMap((t, i) => {
+      const span = document.createElement("span");
+      span.textContent = t;
+      return i ? [" ", span] : [span];
+    }));
     $("share").hidden = false;
   }
   $("next").textContent = nextLabel();

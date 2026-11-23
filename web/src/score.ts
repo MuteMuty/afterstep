@@ -53,9 +53,10 @@ export function isPerfect(r: Result, par: number): boolean {
   return r.hints === 0 && r.moves <= par;
 }
 
-/** " with 2 hints" when any were used, otherwise "". */
+/** ", including 2 hints" when any were used, otherwise "". The hints are
+ *  already in the move count it follows, and it says so (lab#55). */
 export function hintText(n: number): string {
-  return n > 0 ? ` with ${n} ${n === 1 ? "hint" : "hints"}` : "";
+  return n > 0 ? `, including ${n} ${n === 1 ? "hint" : "hints"}` : "";
 }
 
 /** True if `a` beats the saved `best`: fewer moves with hints counted, or as
@@ -94,23 +95,52 @@ export function winTitle(r: Result, par: number): string {
   return isPerfect(r, par) ? "Perfect" : "Solved";
 }
 
-/** The solved line: "Solved in 38 moves with 2 hints, par 36" ("Solved in 5 moves" without a par). */
+/** The win dialog's text for a daily, in phrases that each keep to one line, so
+ *  it breaks only between them: ["Puzzle 4 in 27 moves,", "including 11 hints.",
+ *  "Par is 16."] and, from two days on, "You're on a 5-day streak." */
+export function winParts(id: number | string, r: Result, par: number, streak: number): string[] {
+  const hints = hintText(r.hints);
+  return [
+    ...(hints ? [`Puzzle ${id} in ${total(r)} moves,`, `${hints.slice(2)}.`] : [`Puzzle ${id} in ${total(r)} moves.`]),
+    `Par is ${par}.`,
+    ...(streak > 1 ? [`You're on a ${streak}-day streak.`] : []),
+  ];
+}
+
+/** The same as one line: "Puzzle 4 in 27 moves, including 11 hints. Par is 16." */
+export function winBody(id: number | string, r: Result, par: number, streak: number): string {
+  return winParts(id, r, par, streak).join(" ");
+}
+
+/** The solved line: "Solved in 38 moves, including 2 hints, par 36" ("Solved in 5 moves" without a par). */
 export function resultLine(r: Result, par?: number): string {
   return `Solved in ${total(r)} moves${hintText(r.hints)}${par ? `, par ${par}` : ""}`;
 }
 
-/** The copied result's first line: "Afterstep #12: 36 moves (par 36) ★"; the ★ only for a perfect solve. */
+/** The copied result's first line: "Afterstep #12: 36 moves (par 36) ★"; the ★
+ *  only for a perfect solve. Hints come after par, which belongs to the moves:
+ *  "Afterstep #12: 38 moves (par 36), including 2 hints". */
 export function shareLine(id: number | string, r: Result, par: number): string {
-  return `Afterstep #${id}: ${total(r)} moves${hintText(r.hints)} (par ${par})${isPerfect(r, par) ? " ★" : ""}`;
+  return `Afterstep #${id}: ${total(r)} moves (par ${par})${hintText(r.hints)}${isPerfect(r, par) ? " ★" : ""}`;
 }
 
 /** A solved puzzle in Past puzzles, in phrases that each keep to one line:
- *  ["solved in 14", "with 2 hints"]. */
+ *  ["solved in 14,", "including 2 hints"]. */
 export function archiveParts(r: Result): string[] {
-  return [`solved in ${total(r)}`, ...(r.hints > 0 ? [hintText(r.hints).trim()] : [])];
+  const hints = hintText(r.hints);
+  return hints ? [`solved in ${total(r)},`, hints.slice(2)] : [`solved in ${total(r)}`];
 }
 
-/** The same as one line: "solved in 14 with 2 hints". */
+/** The same as one line: "solved in 14, including 2 hints". */
 export function archiveLine(r: Result): string {
   return archiveParts(r).join(" ");
+}
+
+/** The note for a move hint: "Hint: move up." `counted` is how many hints the
+ *  puzzle has counted with this one (0 in a lesson, which counts none). The
+ *  first also says what hints cost: "Hint: move up. Each hint costs one move."
+ *  Only the first, so screen readers hear it once per puzzle (lab#55); the
+ *  count outlasts a reload and Start over, so neither says it again. */
+export function moveHintNote(move: string, counted: number): string {
+  return `Hint: ${move}.${counted === 1 ? " Each hint costs one move." : ""}`;
 }
