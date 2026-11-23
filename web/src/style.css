@@ -415,6 +415,9 @@ button.hinted { border-color: var(--sun); box-shadow: 0 0 0 3px var(--sun-glow);
      here); without it they keep 16px and a 39-letter nudge overflows at 320px. */
   .status-row { container-type: inline-size; }
   .status { font-size: min(1rem, (100vw - 2.5rem) / 23.5); font-size: min(1rem, (100cqi - 0.5rem) / 23.5); line-height: 1.5rem; gap: 0.5rem; }
+  /* The solved line in its place shrinks the same way, so "Solved in 38 moves,
+     including 12 hints, par 36" keeps to one line (and moves nothing) at 320px. */
+  .solved-text { font-size: min(1rem, (100vw - 2.5rem) / 23.5); font-size: min(1rem, (100cqi - 0.5rem) / 23.5); line-height: 1.5rem; }
 }
 @media (max-width: 380px) {
   .top nav { gap: 0; }
@@ -465,6 +468,7 @@ button.hinted { border-color: var(--sun); box-shadow: 0 0 0 3px var(--sun-glow);
   .tip { grid-area: 3 / 2; font-size: 0.95rem; line-height: 1.35; margin-bottom: 0.5rem; }
   .status-row { grid-area: 4 / 2; width: 100%; margin-top: 0.25rem; container-type: inline-size; }
   .status { font-size: min(1rem, (100cqi - 0.5rem) / 23.5); line-height: 1.5rem; gap: 0.5rem; }
+  .solved-text { font-size: min(1rem, (100cqi - 0.5rem) / 23.5); line-height: 1.5rem; }
   .controls { grid-area: 5 / 2; margin-top: 0.5rem; }
   .controls button { padding-inline: 0.75rem; white-space: nowrap; }
   .below { grid-area: 6 / 2; }
@@ -493,6 +497,13 @@ button.hinted { border-color: var(--sun); box-shadow: 0 0 0 3px var(--sun-glow);
 .archive .meta { color: var(--ink-dim); font-variant-numeric: tabular-nums; }
 .archive .done { color: var(--sun); }
 .archive .done > span { white-space: nowrap; }
+/* Wider screens: a hinted result ("solved in 14, including 2 hints") may need a
+   second line; it takes it on the right, so the date stays whole (lab#55). */
+@media (min-width: 601px) {
+  .archive li a { gap: 0.75rem; }
+  .archive li a > :first-child .meta { white-space: nowrap; }
+  .archive li a > :last-child { text-align: right; }
+}
 
 /* ---------- loading (lab#40) ---------- */
 /* A slow or failed load: a short line, and Retry when it failed. */
@@ -515,6 +526,10 @@ dialog {
 }
 dialog::backdrop { background: rgba(5, 15, 35, 0.6); }
 dialog h2 { font-family: var(--font-display); font-weight: 400; font-size: 2rem; margin: 0 0 0.25rem; }
+/* The result breaks only between its phrases ("Par is 16." stays whole) and is
+   balanced, so no line is left with one word ("16.") on its own (lab#55). */
+#win-body { text-wrap: balance; }
+#win-body > span { white-space: nowrap; }
 .win-actions { display: flex; justify-content: center; gap: 0.5rem; margin-top: 1rem; }
 
 .foot { position: relative; text-align: center; color: var(--ink-dim); font-size: 0.85rem; padding: 1rem 1rem 1.5rem; }

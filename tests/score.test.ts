@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   readSave, total, isPerfect, hintText, isBetter, bestResult, recordResult,
-  hintsSeen, countHint, winTitle, resultLine, shareLine, archiveLine, archiveParts,
+  hintsSeen, countHint, winTitle, winBody, winParts, resultLine, shareLine, archiveLine, archiveParts, moveHintNote,
 } from "../web/src/score.ts";
 
 const DAY = "2026-11-21";
@@ -27,23 +27,52 @@ test("a solve is perfect only at par or better and with no hints", () => {
   assert.equal(winTitle({ moves: 40, hints: 0 }, 36), "Solved");
 });
 
-test("hint text: nothing without hints, then singular and plural", () => {
+test("hint text says the hints are in the moves: nothing without hints, then singular and plural", () => {
   assert.equal(hintText(0), "");
-  assert.equal(hintText(1), " with 1 hint");
-  assert.equal(hintText(2), " with 2 hints");
+  assert.equal(hintText(1), ", including 1 hint");
+  assert.equal(hintText(2), ", including 2 hints");
+  assert.equal(hintText(11), ", including 11 hints");
 });
 
-test("the solved line, copied result and Past puzzles count hints as moves and say how many", () => {
+test("the win dialog says the hints are included, then par, then any streak", () => {
+  assert.equal(winBody(4, { moves: 16, hints: 0 }, 16, 0), "Puzzle 4 in 16 moves. Par is 16.");
+  assert.equal(winBody(4, { moves: 16, hints: 0 }, 16, 1), "Puzzle 4 in 16 moves. Par is 16.");
+  assert.equal(winBody(4, { moves: 16, hints: 1 }, 16, 0), "Puzzle 4 in 17 moves, including 1 hint. Par is 16.");
+  assert.equal(winBody(4, { moves: 16, hints: 11 }, 16, 0), "Puzzle 4 in 27 moves, including 11 hints. Par is 16.");
+  assert.equal(winBody(4, { moves: 16, hints: 11 }, 16, 5), "Puzzle 4 in 27 moves, including 11 hints. Par is 16. You're on a 5-day streak.");
+  assert.equal(winBody(4, { moves: 16, hints: 0 }, 16, 2), "Puzzle 4 in 16 moves. Par is 16. You're on a 2-day streak.");
+});
+
+test("the win dialog's text comes in phrases that each keep to one line", () => {
+  assert.deepEqual(winParts(4, { moves: 16, hints: 0 }, 16, 0), ["Puzzle 4 in 16 moves.", "Par is 16."]);
+  assert.deepEqual(winParts(4, { moves: 16, hints: 1 }, 16, 0), ["Puzzle 4 in 17 moves,", "including 1 hint.", "Par is 16."]);
+  assert.deepEqual(winParts(4, { moves: 16, hints: 11 }, 16, 3),
+    ["Puzzle 4 in 27 moves,", "including 11 hints.", "Par is 16.", "You're on a 3-day streak."]);
+  // Joined, they're the dialog's text.
+  assert.equal(winParts(4, { moves: 16, hints: 11 }, 16, 3).join(" "), winBody(4, { moves: 16, hints: 11 }, 16, 3));
+});
+
+test("the solved line, copied result and Past puzzles count hints as moves and say they're included", () => {
   assert.equal(resultLine({ moves: 36, hints: 0 }, 36), "Solved in 36 moves, par 36");
-  assert.equal(resultLine({ moves: 36, hints: 2 }, 36), "Solved in 38 moves with 2 hints, par 36");
+  assert.equal(resultLine({ moves: 36, hints: 1 }, 36), "Solved in 37 moves, including 1 hint, par 36");
+  assert.equal(resultLine({ moves: 36, hints: 2 }, 36), "Solved in 38 moves, including 2 hints, par 36");
   assert.equal(resultLine({ moves: 5, hints: 0 }), "Solved in 5 moves");
   assert.equal(shareLine(12, { moves: 36, hints: 0 }, 36), "Afterstep #12: 36 moves (par 36) ★");
   assert.equal(shareLine(12, { moves: 40, hints: 0 }, 36), "Afterstep #12: 40 moves (par 36)");
-  assert.equal(shareLine(12, { moves: 35, hints: 1 }, 36), "Afterstep #12: 36 moves with 1 hint (par 36)");
+  // Par right after the moves, so it can't be read as a par for hints.
+  assert.equal(shareLine(12, { moves: 35, hints: 1 }, 36), "Afterstep #12: 36 moves (par 36), including 1 hint");
+  assert.equal(shareLine(12, { moves: 16, hints: 11 }, 16), "Afterstep #12: 27 moves (par 16), including 11 hints");
   assert.equal(archiveLine({ moves: 14, hints: 0 }), "solved in 14");
-  assert.equal(archiveLine({ moves: 12, hints: 2 }), "solved in 14 with 2 hints");
+  assert.equal(archiveLine({ moves: 13, hints: 1 }), "solved in 14, including 1 hint");
+  assert.equal(archiveLine({ moves: 12, hints: 2 }), "solved in 14, including 2 hints");
   assert.deepEqual(archiveParts({ moves: 14, hints: 0 }), ["solved in 14"]);
-  assert.deepEqual(archiveParts({ moves: 12, hints: 2 }), ["solved in 14", "with 2 hints"]);
+  assert.deepEqual(archiveParts({ moves: 12, hints: 2 }), ["solved in 14,", "including 2 hints"]);
+});
+
+test("a counted hint says that each hint costs one move; a lesson's hint doesn't", () => {
+  assert.equal(moveHintNote("move up", true), "Hint: move up. Each hint costs one move.");
+  assert.equal(moveHintNote("wait a turn", true), "Hint: wait a turn. Each hint costs one move.");
+  assert.equal(moveHintNote("move up", false), "Hint: move up.");
 });
 
 test("a result is better when fewer moves with hints counted; on a tie, fewer hints", () => {

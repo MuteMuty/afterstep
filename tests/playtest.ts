@@ -7,8 +7,10 @@
 // offered undo by mouse and then, after Hint by keyboard, with U (which does
 // nothing while no offer shows; the offer fits one line at 390px), follows
 // hints through lesson 5 (the echo bump). On today's puzzle and a past one each
-// hint counts as a move (lab#25): no "Perfect" or star at par, "with N hints"
-// in the dialog, copied result, solved line and Past puzzles, and today's count
+// hint counts as a move (lab#25): no "Perfect" or star at par, "including N
+// hints" (lab#55) in the dialog, copied result, solved line and Past puzzles,
+// each counted hint's note says "Each hint costs one move." (a lesson's
+// doesn't), and today's count
 // is kept after How to play and back, a reload and Start over. Each of those
 // gives the nudge again on the next first press, free (lab#29). A save from
 // before hints counted still shows as it did, and a worse hinted solve doesn't
@@ -552,6 +554,7 @@ async function touchControls(browser, name, viewport) {
     } else if (kind === "move") {
       if (!(await page.isVisible("#board .hint-mark"))) fail(`${name}: tapping Hint again should mark the next move on the board`);
       if (!(await page.textContent("#hint-note"))?.startsWith("Hint: ")) fail(`${name}: tapping Hint again should say the next move`);
+      if ((await page.textContent("#hint-note"))?.includes("costs")) fail(`${name}: a lesson's hint costs nothing and shouldn't say it does, got "${await page.textContent("#hint-note")}"`);
       if ((await layout()).dpad !== withHint.dpad) fail(`${name}: showing a hint moved the d-pad`);
       await page.screenshot({ path: join(out, `${name}-hint.png`) });
     }
@@ -792,7 +795,8 @@ async function hintFlow(browser, name, viewport) {
   if ((await moves()) !== 1) fail(`${name}: the nudge after a second Start over should be free (moves ${await moves()}, wanted 1)`);
   await play(page, level.solution.slice(0, -1));
   await page.keyboard.press("KeyH");
-  if (!(await noteText()).startsWith("Hint: ")) fail(`${name}: back on today's puzzle with a hint used, H should hint a move, got "${await noteText()}"`);
+  if (!(await noteText()).startsWith("Hint: ") || !(await noteText()).endsWith(". Each hint costs one move."))
+    fail(`${name}: back on today's puzzle with a hint used, H should hint a move and say each hint costs one move, got "${await noteText()}"`);
   if ((await moves()) !== level.par + 1) fail(`${name}: a second hint should count too (moves ${await moves()}, wanted ${level.par + 1})`);
   await page.keyboard.press(KEY[last]);
   if (!(await dialogOpens(page))) {
@@ -804,7 +808,7 @@ async function hintFlow(browser, name, viewport) {
   const title = await page.textContent("#win-title");
   if (title !== "Solved") fail(`${name}: a hinted solve should be titled "Solved", got "${title}"`);
   const body = await page.textContent("#win-body");
-  if (!body.includes(`in ${total} moves with 2 hints. Par is ${level.par}.`)) fail(`${name}: win dialog should say "in ${total} moves with 2 hints", got "${body}"`);
+  if (!body.includes(`in ${total} moves, including 2 hints. Par is ${level.par}.`)) fail(`${name}: win dialog should say "in ${total} moves, including 2 hints", got "${body}"`);
   const copy = async () => {
     await page.evaluate(() => {
       Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async (t) => { window.__copied = t; } } });
@@ -813,25 +817,32 @@ async function hintFlow(browser, name, viewport) {
     return page.evaluate(() => window.__copied ?? "");
   };
   const copied = await copy();
-  if (!copied.startsWith(`Afterstep #${level.id}: ${total} moves with 2 hints (par ${level.par})\n`)) fail(`${name}: copied result should say "${total} moves with 2 hints" with no star, got "${copied.split("\n")[0]}"`);
+  if (!copied.startsWith(`Afterstep #${level.id}: ${total} moves (par ${level.par}), including 2 hints\n`)) fail(`${name}: copied result should say "${total} moves (par ${level.par}), including 2 hints" with no star, got "${copied.split("\n")[0]}"`);
   await page.screenshot({ path: join(out, `${name}-daily-won-hint.png`) });
   await page.keyboard.press("Escape");
   // The solved line says what the dialog said, hints and all, and copies the same.
-  await expectSolved(page, name, "today's puzzle with hints", `Solved in ${total} moves with 2 hints, par ${level.par}`, "Past puzzles");
+  await expectSolved(page, name, "today's puzzle with hints", `Solved in ${total} moves, including 2 hints, par ${level.par}`, "Past puzzles");
   await page.evaluate(() => (window.__copied = ""));
   await page.click("#solved-share");
-  if ((await page.evaluate(() => window.__copied)) !== copied) fail(`${name}: the solved line should copy "with 2 hints" like the dialog did`);
+  if ((await page.evaluate(() => window.__copied)) !== copied) fail(`${name}: the solved line should copy "including 2 hints" like the dialog did`);
   const todayRow = await archiveDone(page, level.id);
-  if (todayRow !== `solved in ${total} with 2 hints`) fail(`${name}: Past puzzles should say "solved in ${total} with 2 hints" for today, got "${todayRow}"`);
+  if (todayRow !== `solved in ${total}, including 2 hints`) fail(`${name}: Past puzzles should say "solved in ${total}, including 2 hints" for today, got "${todayRow}"`);
   else console.log(`${name}: Past puzzles: "${todayRow}"`);
+  // The longer hinted result never splits the date (lab#55).
+  const dateLines = await page.evaluate((id) => {
+    const a = [...document.querySelectorAll<HTMLElement>("#archive-list a")].find((b) => b.textContent.startsWith(`Puzzle ${id} `));
+    const d = a.firstElementChild.querySelector<HTMLElement>(".meta");
+    return d.getClientRects().length;
+  }, level.id);
+  if (dateLines !== 1) fail(`${name}: in Past puzzles today's date should stay on one line next to a hinted result, takes ${dateLines}`);
   await page.screenshot({ path: join(out, `${name}-past-puzzles-hints.png`) });
 
   // A past puzzle counts its hint the same way.
   const pastDate = readdirSync(join(repo, "levels/daily")).map((f) => f.replace(".json", "")).filter((d) => d < today).sort()[0];
   if (pastDate) {
     const past = JSON.parse(readFileSync(join(repo, "levels/daily", `${pastDate}.json`), "utf8"));
-    const pastLine = `Solved in ${past.par + 1} moves with 1 hint, par ${past.par}`;
-    const pastShare = `Afterstep #${past.id}: ${past.par + 1} moves with 1 hint (par ${past.par})\n`;
+    const pastLine = `Solved in ${past.par + 1} moves, including 1 hint, par ${past.par}`;
+    const pastShare = `Afterstep #${past.id}: ${past.par + 1} moves (par ${past.par}), including 1 hint\n`;
     await openPast(page, past.id);
     await play(page, past.solution.slice(0, -1));
     await expectNudge(`past puzzle ${pastDate}`);
@@ -842,8 +853,8 @@ async function hintFlow(browser, name, viewport) {
       const pastTitle = await page.textContent("#win-title");
       const pastBody = await page.textContent("#win-body");
       const pastCopy = await copy();
-      if (pastTitle !== "Solved" || !pastBody.includes(`in ${past.par + 1} moves with 1 hint.`) || !pastCopy.startsWith(pastShare))
-        fail(`${name}: past puzzle ${pastDate} won at par with a hint should be "Solved" in ${past.par + 1} moves with 1 hint and no star ("${pastTitle}" / "${pastBody}" / "${pastCopy.split("\n")[0]}")`);
+      if (pastTitle !== "Solved" || !pastBody.includes(`in ${past.par + 1} moves, including 1 hint.`) || !pastCopy.startsWith(pastShare))
+        fail(`${name}: past puzzle ${pastDate} won at par with a hint should be "Solved" in ${past.par + 1} moves, including 1 hint, and no star ("${pastTitle}" / "${pastBody}" / "${pastCopy.split("\n")[0]}")`);
       await page.keyboard.press("Escape");
       await expectSolved(page, name, `past puzzle ${pastDate}`, pastLine, "Past puzzles");
       // Reopen it from Past puzzles: the same solved line, from the saved best.
@@ -907,14 +918,93 @@ async function oldSave(browser, name, viewport) {
     return page.close();
   }
   const body = await page.textContent("#win-body");
-  if (!body.includes(`in ${level.par + 2} moves with 2 hints.`)) fail(`${name}: win dialog should say "in ${level.par + 2} moves with 2 hints", got "${body}"`);
+  if (!body.includes(`in ${level.par + 2} moves, including 2 hints.`)) fail(`${name}: win dialog should say "in ${level.par + 2} moves, including 2 hints", got "${body}"`);
   await page.keyboard.press("Escape");
   const kept = await archiveDone(page, level.id);
   if (kept !== `solved in ${level.par + 1}`) fail(`${name}: a worse hinted solve should not replace the saved ${level.par + 1}, Past puzzles says "${kept}"`);
   await openPast(page, level.id);
   await expectSolved(page, name, "reopened after a worse hinted solve", before, "Past puzzles");
-  console.log(`${name}: an old save's "solved in ${level.par + 1}" stays after a solve in ${level.par + 2} with 2 hints`);
+  console.log(`${name}: an old save's "solved in ${level.par + 1}" stays after a solve in ${level.par + 2}, including 2 hints`);
   await page.close();
+}
+
+// The win dialog's text (lab#55): won with no hints, 1 hint and 11, each with
+// and without a streak, at 390x844 and 1280x900, no line of it is one word on
+// its own (like "16."). After it closes, a hinted solved line keeps to one line
+// at 390, 360 and 320px wide, so it moves nothing.
+async function winWrap(browser) {
+  const day = (back) => { const d = new Date(now); d.setDate(d.getDate() - back); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
+  const streakDays = { [day(1)]: 20, [day(2)]: 20 };
+  const cases = [
+    { key: "plain", hints: 0, streak: false },
+    { key: "streak", hints: 0, streak: true },
+    { key: "1-hint", hints: 1, streak: false },
+    { key: "11-hints", hints: 11, streak: false },
+    { key: "11-hints-streak", hints: 11, streak: true },
+  ];
+  // The dialog's text as shown, line by line, from where each word lands.
+  const lines = (page) => page.evaluate(() => {
+    const walk = document.createTreeWalker(document.querySelector<HTMLElement>("#win-body"), NodeFilter.SHOW_TEXT);
+    const rows: { top: number; words: string[] }[] = [];
+    for (let t = walk.nextNode(); t; t = walk.nextNode()) {
+      const re = /\S+/g;
+      for (let m; (m = re.exec(t.textContent)); ) {
+        const r = document.createRange();
+        r.setStart(t, m.index);
+        r.setEnd(t, m.index + m[0].length);
+        const top = r.getBoundingClientRect().top;
+        if (!rows.length || Math.abs(rows.at(-1).top - top) > 2) rows.push({ top, words: [] });
+        rows.at(-1).words.push(m[0]);
+      }
+    }
+    return rows.map((l) => l.words.join(" "));
+  });
+  const solvedLines = (page) => page.evaluate(() => {
+    const e = document.querySelector<HTMLElement>("#solved-text"), r = document.createRange();
+    r.selectNodeContents(e);
+    return Math.round(r.getBoundingClientRect().height / parseFloat(getComputedStyle(e).lineHeight));
+  });
+  for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 900 }]) {
+    for (const c of cases) {
+      const name = `win-wrap-${viewport.width}-${c.key}`;
+      const page = await newPage(browser, { viewport });
+      page.on("pageerror", (e) => fail(`${name}: page error: ${e.message}`));
+      const saved = JSON.stringify({ learned: true, results: c.streak ? streakDays : {}, hintsSeen: c.hints ? { [today]: c.hints } : {} });
+      await page.addInitScript((s) => location.protocol.startsWith("http") && !localStorage.getItem("afterstep:v1") && localStorage.setItem("afterstep:v1", s), saved);
+      await page.goto(base, { waitUntil: "networkidle" }).catch((e) => fail(`${name}: could not load ${base}: ${e.message}`));
+      if (!(await page.waitForSelector(".cell", { timeout: 8000 }).catch(() => null))) {
+        fail(`${name}: board never rendered`);
+        await page.close();
+        continue;
+      }
+      await play(page, level.solution);
+      if (!(await dialogOpens(page))) {
+        fail(`${name}: today's puzzle not solved by its solution`);
+        await page.close();
+        continue;
+      }
+      const got = await lines(page);
+      const body = await page.textContent("#win-body");
+      if (c.hints && !body.includes(`in ${level.par + c.hints} moves, including ${c.hints} ${c.hints === 1 ? "hint" : "hints"}. Par is ${level.par}.`))
+        fail(`${name}: the win dialog should say the hints are included, got "${body}"`);
+      if (c.streak !== body.includes("You're on a 3-day streak.")) fail(`${name}: the win dialog ${c.streak ? "should" : "shouldn't"} name a 3-day streak, got "${body}"`);
+      if (got.length > 1 && got.some((l) => !l.includes(" "))) fail(`${name}: the win dialog has a one-word line: ${JSON.stringify(got)}`);
+      else if (!got.some((l) => l.includes(`Par is ${level.par}.`))) fail(`${name}: "Par is ${level.par}." should stay on one line: ${JSON.stringify(got)}`);
+      else console.log(`${name}: ${JSON.stringify(got)}`);
+      await page.screenshot({ path: join(out, `${name}.png`) });
+      if (c.hints === 11 && !c.streak) {
+        await page.keyboard.press("Escape");
+        await page.waitForFunction(() => document.querySelector<HTMLElement>("#solved-actions")?.offsetParent, null, { timeout: 1000 }).catch(() => {});
+        for (const width of viewport.width < 600 ? [390, 360, 320] : [1280]) {
+          await page.setViewportSize({ width, height: viewport.height });
+          const n = await solvedLines(page);
+          if (n !== 1) fail(`${name}: at ${width}px the solved line "${await page.textContent("#solved-text")}" takes ${n} lines`);
+          await page.screenshot({ path: join(out, `${name}-solved-${width}.png`) });
+        }
+      }
+      await page.close();
+    }
+  }
 }
 
 // All five lessons in a row, by keyboard or by tapping the d-pad. Each says
@@ -2255,6 +2345,7 @@ try {
   await touchControls(browser, "phone-touch", { width: 390, height: 844 });
   await hintFlow(browser, "desktop-hints", { width: 1280, height: 900 });
   await oldSave(browser, "old-save", { width: 390, height: 844 });
+  await winWrap(browser);
   await lessons(browser, "desktop-lessons-dark", { width: 1280, height: 900 }, "dark", false);
   await lessons(browser, "phone-lessons-light", { width: 390, height: 844 }, "light", true);
   await lessons(browser, "phone-360-lessons-dark", { width: 360, height: 640 }, "dark", true);
