@@ -136,9 +136,11 @@ export function archiveLine(r: Result): string {
   return archiveParts(r).join(" ");
 }
 
-/** The note for a move hint: "Hint: move up." On a daily, where it counts,
- *  it also says what it costs, so a hint shown again after an undo isn't a
- *  surprise: "Hint: move up. Each hint costs one move." */
-export function moveHintNote(move: string, counted: boolean): string {
-  return `Hint: ${move}.${counted ? " Each hint costs one move." : ""}`;
+/** The note for a move hint: "Hint: move up." `counted` is how many hints the
+ *  puzzle has counted with this one (0 in a lesson, which counts none). The
+ *  first also says what hints cost: "Hint: move up. Each hint costs one move."
+ *  Only the first, so screen readers hear it once per puzzle (lab#55); the
+ *  count outlasts a reload and Start over, so neither says it again. */
+export function moveHintNote(move: string, counted: number): string {
+  return `Hint: ${move}.${counted === 1 ? " Each hint costs one move." : ""}`;
 }

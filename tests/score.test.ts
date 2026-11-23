@@ -69,10 +69,14 @@ test("the solved line, copied result and Past puzzles count hints as moves and s
   assert.deepEqual(archiveParts({ moves: 12, hints: 2 }), ["solved in 14,", "including 2 hints"]);
 });
 
-test("a counted hint says that each hint costs one move; a lesson's hint doesn't", () => {
-  assert.equal(moveHintNote("move up", true), "Hint: move up. Each hint costs one move.");
-  assert.equal(moveHintNote("wait a turn", true), "Hint: wait a turn. Each hint costs one move.");
-  assert.equal(moveHintNote("move up", false), "Hint: move up.");
+test("a daily's first counted hint says that each hint costs one move; later ones and a lesson's don't", () => {
+  assert.equal(moveHintNote("move up", 1), "Hint: move up. Each hint costs one move.");
+  assert.equal(moveHintNote("wait a turn", 1), "Hint: wait a turn. Each hint costs one move.");
+  // Said once per puzzle (lab#55): the count is kept over a reload and Start over, so it isn't said again.
+  assert.equal(moveHintNote("move left", 2), "Hint: move left.");
+  assert.equal(moveHintNote("move left", 11), "Hint: move left.");
+  // A lesson counts no hints.
+  assert.equal(moveHintNote("move up", 0), "Hint: move up.");
 });
 
 test("a result is better when fewer moves with hints counted; on a tie, fewer hints", () => {

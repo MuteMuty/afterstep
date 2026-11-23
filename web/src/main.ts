@@ -278,7 +278,7 @@ function showHint() {
     els.hint.dataset.hint = String(h);
     els.hint.hidden = false;
     (h === WAIT ? $("wait") : document.querySelector(`.dpad [data-move="${h}"]`))?.classList.add("hinted");
-    note(moveHintNote(MOVE_WORDS[h], mode === "daily"));
+    note(moveHintNote(MOVE_WORDS[h], mode === "daily" ? hintsUsed : 0));
   } else if (h < 0) {
     const n = -h;
     const undo = document.createElement("button");

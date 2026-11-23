@@ -9,8 +9,9 @@
 // hints through lesson 5 (the echo bump). On today's puzzle and a past one each
 // hint counts as a move (lab#25): no "Perfect" or star at par, "including N
 // hints" (lab#55) in the dialog, copied result, solved line and Past puzzles,
-// each counted hint's note says "Each hint costs one move." (a lesson's
-// doesn't), and today's count
+// a puzzle's first counted hint shows and announces "Each hint costs one
+// move." and its later ones don't (a lesson's never does), lesson 1's tip says
+// it too, and today's count
 // is kept after How to play and back, a reload and Start over. Each of those
 // gives the nudge again on the next first press, free (lab#29). A save from
 // before hints counted still shows as it did, and a worse hinted solve doesn't
@@ -250,6 +251,8 @@ async function session(browser, name, viewport, colorScheme) {
   // Lesson 1, then lesson 2 (which needs the echo).
   if ((await page.textContent("#level-title")) !== "Plates open doors") fail(`${name}: first visit should start the lessons`);
   if (!(await page.textContent("#tip"))?.startsWith("Reach the ring.")) fail(`${name}: lesson 1 tip should state the goal`);
+  // How to play says what a hint costs before one is paid for (lab#55).
+  if (!(await page.textContent("#tip"))?.endsWith(" On daily puzzles, each hint costs one move.")) fail(`${name}: lesson 1 tip should say each hint costs one move on daily puzzles, says "${await page.textContent("#tip")}"`);
   await play(page, "RRRRR");
   if (!(await dialogOpens(page))) fail(`${name}: lesson 1 not solved by RRRRR`);
   await page.click("#next");
@@ -766,6 +769,13 @@ async function hintFlow(browser, name, viewport) {
   if ((await page.getAttribute("#board .hint-mark", "data-hint")) !== String("UDLR.".indexOf(last)))
     fail(`${name}: hint before the last move should point at ${last}`);
   if ((await moves()) !== level.par) fail(`${name}: one hint should count as one move (moves ${await moves()}, wanted ${level.par})`);
+  // The puzzle's first counted hint says what hints cost, on screen and to screen readers, once (lab#55).
+  const cost = "Each hint costs one move.";
+  const firstNote = await noteText();
+  if (!firstNote.startsWith("Hint: ") || !firstNote.endsWith(`. ${cost}`)) fail(`${name}: today's first counted hint should say "${cost}", got "${firstNote}"`);
+  const firstSaid = (await liveText(page)).join(" | ");
+  if (firstSaid.split(cost).length !== 2) fail(`${name}: today's first counted hint should announce "${cost}" once, the live regions say "${firstSaid}"`);
+  else console.log(`${name}: first counted hint says "${firstSaid}"`);
   await page.screenshot({ path: join(out, `${name}-daily-hint.png`) });
 
   // Leaving and coming back, a reload and Start over all keep the hint: the
@@ -795,8 +805,13 @@ async function hintFlow(browser, name, viewport) {
   if ((await moves()) !== 1) fail(`${name}: the nudge after a second Start over should be free (moves ${await moves()}, wanted 1)`);
   await play(page, level.solution.slice(0, -1));
   await page.keyboard.press("KeyH");
-  if (!(await noteText()).startsWith("Hint: ") || !(await noteText()).endsWith(". Each hint costs one move."))
-    fail(`${name}: back on today's puzzle with a hint used, H should hint a move and say each hint costs one move, got "${await noteText()}"`);
+  // The second counted hint, after a reload and Start over: just the move, on screen and read out.
+  const secondNote = await noteText();
+  if (!/^Hint: [a-z ]+\.$/.test(secondNote)) fail(`${name}: back on today's puzzle with a hint used, H should only hint a move ("Hint: <move>."), got "${secondNote}"`);
+  const secondSaid = (await liveText(page)).join(" | ");
+  if (secondSaid.includes("costs")) fail(`${name}: today's second counted hint shouldn't announce the cost again, the live regions say "${secondSaid}"`);
+  else console.log(`${name}: second counted hint says "${secondSaid}"`);
+  await page.screenshot({ path: join(out, `${name}-daily-second-hint.png`) });
   if ((await moves()) !== level.par + 1) fail(`${name}: a second hint should count too (moves ${await moves()}, wanted ${level.par + 1})`);
   await page.keyboard.press(KEY[last]);
   if (!(await dialogOpens(page))) {
@@ -847,6 +862,8 @@ async function hintFlow(browser, name, viewport) {
     await play(page, past.solution.slice(0, -1));
     await expectNudge(`past puzzle ${pastDate}`);
     await page.keyboard.press("KeyH");
+    // Each puzzle says the cost with its own first counted hint.
+    if (!(await noteText()).endsWith(". Each hint costs one move.")) fail(`${name}: past puzzle ${pastDate}'s first counted hint should say "Each hint costs one move.", got "${await noteText()}"`);
     await page.keyboard.press(KEY[past.solution.at(-1)]);
     if (!(await dialogOpens(page))) fail(`${name}: past puzzle ${pastDate} not won after a hint`);
     else {
