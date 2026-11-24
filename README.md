@@ -34,6 +34,24 @@ cargo run --release --manifest-path engine/Cargo.toml --features gen -- check le
 npm run deploy                      # build and deploy to Cloudflare
 ```
 
+### Playtest
+
+`tests/playtest.ts` plays the game in a real browser against a running build and saves screenshots to `playtest-out/`. It uses Brave by default; set `PLAYTEST_BROWSER` to another Chromium-based browser's executable.
+
+```sh
+npm run build && npx vite preview web --port 4173 --strictPort   # in one terminal
+node tests/playtest.ts http://localhost:4173                      # in another
+```
+
+Many phone players use Safari, so the playtest can also run in Playwright's WebKit, the engine Safari uses. Install it once (a free download, no account), then set `PLAYTEST_ENGINE=webkit`:
+
+```sh
+npx playwright install webkit
+PLAYTEST_ENGINE=webkit node tests/playtest.ts http://localhost:4173   # screenshots in playtest-out/webkit/
+```
+
+In WebKit, Tab skips buttons and links as Safari's does, so the playtest presses Option-Tab there. It prints each check WebKit can't make, and why, then lists them again at the end. If Playwright keeps its browsers somewhere other than the default, set `PLAYWRIGHT_BROWSERS_PATH` for the run too.
+
 ## Status
 
 Live at [afterstep.brightloopapps.com](https://afterstep.brightloopapps.com) since 10 Nov 2026, with a new puzzle every day. MIT licence. See [`LICENSE`](LICENSE).

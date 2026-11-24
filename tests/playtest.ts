@@ -99,13 +99,15 @@
 // blocked the game plays with no console error of its own.
 //
 // Usage: node tests/playtest.ts <baseUrl>
-// Env:   PLAYTEST_BROWSER  Chromium-based browser executable (default: Brave)
+// Env:   PLAYTEST_ENGINE   chromium (default) or webkit: Playwright's own WebKit, the
+//                          engine Safari uses (install it with `npx playwright install webkit`)
+//        PLAYTEST_BROWSER  Chromium-based browser executable (default: Brave)
 //        PLAYTEST_OUT      screenshot folder (default: ./playtest-out)
 //        LAB_ANALYTICS_JS  the hub's built shared analytics script (default: the lab
 //                          checkout's hub/public/analytics/v1.js; build it there with
 //                          `npm run bundle`). The live one is never loaded.
 // Exit:  0 = pass, 1 = fail (reasons printed)
-import { chromium } from "playwright";
+import { chromium, webkit } from "playwright";
 import { readFileSync, readdirSync, mkdirSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { join, dirname } from "node:path";
@@ -119,10 +121,18 @@ if (!base) {
   process.exit(2);
 }
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
-const out = process.env.PLAYTEST_OUT || join(repo, "playtest-out");
+const engine = process.env.PLAYTEST_ENGINE || "chromium";
+if (engine !== "chromium" && engine !== "webkit") {
+  console.error(`PLAYTEST_ENGINE must be chromium or webkit, not "${engine}"`);
+  process.exit(2);
+}
+const out = process.env.PLAYTEST_OUT || join(repo, "playtest-out", engine === "webkit" ? "webkit" : "");
 const browserPath = process.env.PLAYTEST_BROWSER || "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser";
 mkdirSync(out, { recursive: true });
 
+// Safari's Tab skips buttons and links unless "Press Tab to highlight each item on a
+// webpage" is on, so its keyboard users press Option-Tab, as the playtest does in WebKit.
+const TAB = engine === "webkit" ? "Alt+Tab" : "Tab";
 const KEY = { U: "ArrowUp", D: "ArrowDown", L: "ArrowLeft", R: "ArrowRight", ".": "Space" };
 const pad = (n) => String(n).padStart(2, "0");
 const now = new Date();
@@ -155,6 +165,9 @@ declare global { interface Window { [hook: `__${string}`]: any } } // the playte
 
 const failures = [];
 const fail = (msg) => failures.push(msg);
+// Checks this engine can't make, each with why, printed as they're skipped and again at the end.
+const skipped = [];
+const skip = (what, why) => { skipped.push(`${what}: ${why}`); console.log(`skipped in ${engine}: ${what}: ${why}`); };
 const dialogOpens = (page) => page.waitForSelector("dialog[open]", { timeout: 2500 }).then(() => true, () => false);
 
 // The solved line below the board: its text and Next label, or null when hidden.
@@ -297,7 +310,12 @@ async function session(browser, name, viewport, colorScheme) {
 async function winKeys(page, name, playing) {
   const moves = async () => Number((await page.textContent("#moves")).match(/Moves\s*(\d+)/)?.[1]);
   const won = await moves();
-  for (const k of ["KeyR", "KeyZ", "Backspace", "Period", "ArrowLeft", "KeyD"]) await page.keyboard.press(k);
+  const keys = ["KeyR", "KeyZ", "Backspace", "Period", "ArrowLeft", "KeyD"];
+  if (engine === "webkit") {
+    keys.splice(keys.indexOf("Backspace"), 1);
+    skip(`${name}: Backspace behind the win dialog`, "Playwright's WebKit goes back in history on Backspace even on a page with no script (Safari doesn't)");
+  }
+  for (const k of keys) await page.keyboard.press(k);
   await page.waitForTimeout(200);
   if ((await moves()) !== won) fail(`${name}: keys behind the win dialog changed moves from ${won} to ${await moves()}`);
   if (!(await page.isVisible("dialog[open]"))) fail(`${name}: win dialog closed after game keys`);
@@ -322,7 +340,7 @@ async function winKeys(page, name, playing) {
   // Keyboard: Tab from the board reaches Copy result on the solved line, and Enter copies.
   await stubClipboard(page);
   await page.focus("#board");
-  for (let i = 0; i < 8 && (await page.evaluate(() => document.activeElement.id)) !== "solved-share"; i++) await page.keyboard.press("Tab");
+  for (let i = 0; i < 8 && (await page.evaluate(() => document.activeElement.id)) !== "solved-share"; i++) await page.keyboard.press(TAB);
   if ((await page.evaluate(() => document.activeElement.id)) !== "solved-share") fail(`${name}: Tab from the board should reach the solved line's Copy result`);
   else {
     await page.keyboard.press("Enter");
@@ -383,7 +401,7 @@ async function keyboardStart(browser, name, viewport) {
   await page.mouse.click(2, 2);
   const seen = [];
   for (let i = 0; i < 6; i++) {
-    await page.keyboard.press("Tab");
+    await page.keyboard.press(TAB);
     seen.push(await page.evaluate(() => {
       const el = document.activeElement as HTMLElement;
       return el.id || el.dataset.nav || (el.classList.contains("brand") ? "brand" : el.tagName.toLowerCase());
@@ -404,7 +422,7 @@ async function keyboardStart(browser, name, viewport) {
   if ((await moves()) !== m0 + 2) fail(`${name}: Period on the board should wait one step`);
   await page.keyboard.press("ArrowRight");
   if ((await moves()) !== m0 + 3) fail(`${name}: Arrow key on the board should move one step`);
-  await page.keyboard.press("Tab");
+  await page.keyboard.press(TAB);
   const onUndo = await page.evaluate(() => document.activeElement.id);
   if (onUndo !== "undo") fail(`${name}: Tab from the board should reach Undo, reached "${onUndo}"`);
   await page.keyboard.press("Space");
@@ -711,7 +729,7 @@ async function hintFlow(browser, name, viewport) {
 
   // The keyboard takes it too: lose again, Tab to Hint, press it with Enter, then U.
   await play(page, "D..");
-  for (let i = 0; i < 4; i++) await page.keyboard.press("Tab");
+  for (let i = 0; i < 4; i++) await page.keyboard.press(TAB);
   if ((await page.evaluate(() => document.activeElement.id)) !== "hint") fail(`${name}: four Tabs from the board should reach Hint`);
   await page.keyboard.press("Enter");
   if ((await noteText()) !== offer) fail(`${name}: Hint by keyboard should offer "${offer}", got "${await noteText()}"`);
@@ -1214,6 +1232,9 @@ async function nudgesFit(page, name, touch = true) {
   console.log(`${name}: ${sizes.rows.length} nudges fit; longest "${longest.text}" (${longest.key}) ${Math.round(longest.textW)}px of ${sizes.statusW}px`);
 }
 
+// WebKit's own line for a request the playtest blocks: an info line, where Chromium logs an error.
+const WEBKIT_BLOCKED = /^Web Inspector blocked \S+ from loading$/;
+
 // Fit (lab#10): every lesson and today's puzzle, opened by link on a touch
 // phone, shows the board, status line, controls and d-pad without scrolling,
 // and still does late in today's puzzle (once the echo follows), with the
@@ -1402,7 +1423,7 @@ async function likesFlow(browser) {
 
   // Keyboard: Tab from the board reaches the heart; Enter likes it, at once, before the API answers.
   await desk.focus("#board");
-  for (let i = 0; i < 20 && (await desk.evaluate(() => document.activeElement.id)) !== "like-foot"; i++) await desk.keyboard.press("Tab");
+  for (let i = 0; i < 20 && (await desk.evaluate(() => document.activeElement.id)) !== "like-foot"; i++) await desk.keyboard.press(TAB);
   if ((await desk.evaluate(() => document.activeElement.id)) !== "like-foot") fail(`${name}: Tab from the board should reach the heart`);
   api.delay = 400;
   await desk.keyboard.press("Enter");
@@ -1841,25 +1862,31 @@ async function pastLinks(browser, name, viewport) {
   const buttonBorder = await page.evaluate(() => `${getComputedStyle(document.querySelector("[data-nav]")).borderTopWidth} solid`);
   await page.mouse.move(0, 0);
   const rest = await look();
-  if (rest.display !== "flex" || rest.border !== buttonBorder || rest.radius !== "10px" || rest.underline !== "none" || rest.cursor !== "pointer" || rest.color !== rest.bodyColor || Math.abs(rest.width - rest.li) > 0.5)
+  if (engine === "webkit") skip(`${name}: an entry's hand cursor`, "WebKit computes cursor auto for a link and draws the hand itself, so the computed style can't show it");
+  if (rest.display !== "flex" || rest.border !== buttonBorder || rest.radius !== "10px" || rest.underline !== "none" || (rest.cursor !== "pointer" && engine !== "webkit") || rest.color !== rest.bodyColor || Math.abs(rest.width - rest.li) > 0.5)
     fail(`${name}: an entry should look like the old button row (border ${buttonBorder}), got ${JSON.stringify(rest)}`);
   await link.hover();
   const hover = await look();
   if (hover.borderColor === rest.borderColor) fail(`${name}: an entry's border should darken on hover (${rest.borderColor})`);
   await page.mouse.move(0, 0);
   await page.locator('[data-nav="archive"]').focus();
-  for (let i = 0; i < 8 && !(await link.evaluate((a) => a === document.activeElement)); i++) await page.keyboard.press("Tab");
+  for (let i = 0; i < 8 && !(await link.evaluate((a) => a === document.activeElement)); i++) await page.keyboard.press(TAB);
   const ring = await look();
   await page.locator('[data-nav="archive"]').focus();
-  await page.keyboard.press("Shift+Tab");
-  await page.keyboard.press("Tab");
+  await page.keyboard.press(`Shift+${TAB}`);
+  await page.keyboard.press(TAB);
   const navRing = await page.evaluate(() => { const c = getComputedStyle(document.activeElement); return `${c.outlineWidth} ${c.outlineStyle}`; });
   if (ring.outline !== navRing || !ring.outline.endsWith("solid")) fail(`${name}: a keyboard-focused entry should show the buttons' focus ring (${navRing}), got ${ring.outline}`);
   await page.screenshot({ path: join(out, `${name}-past-puzzles.png`) });
 
   // Middle click and Cmd/Ctrl click open the puzzle in a new tab, and leave this one as it is.
   const before = await where();
-  for (const how of [{ button: "middle" }, { modifiers: ["ControlOrMeta"] }]) {
+  const clicks: { button?: "middle"; modifiers?: ["ControlOrMeta"] }[] = [{ button: "middle" }, { modifiers: ["ControlOrMeta"] }];
+  if (engine === "webkit") {
+    clicks.shift();
+    skip(`${name}: middle click opens a new tab`, "Playwright's WebKit follows a middle-clicked link in the same tab even on a page with no script (Safari opens a new tab)");
+  }
+  for (const how of clicks) {
     const label = how.button ? "middle click" : "Cmd/Ctrl click";
     const [tab] = await Promise.all([ctx.waitForEvent("page", { timeout: 4000 }).catch(() => null), link.click(how)]);
     if (!tab) { fail(`${name}: a ${label} on an entry should open a new tab`); continue; }
@@ -1892,8 +1919,12 @@ async function pastLinks(browser, name, viewport) {
   await page.goBack();
   await expectAt("Back from a lesson", { url: "/#/past", screen: "past" });
   await expectPastFocus(page, name, "Back to Past puzzles from a lesson", null);
-  // Past puzzles by the nav leaves focus on the nav.
-  await page.click('[data-nav="archive"]');
+  // Past puzzles by the nav leaves focus on the nav. WebKit, like Safari on macOS,
+  // doesn't focus a button on click, so there it's pressed by keyboard.
+  if (engine === "webkit") {
+    await page.focus('[data-nav="archive"]');
+    await page.keyboard.press("Enter");
+  } else await page.click('[data-nav="archive"]');
   await settle("past");
   if ((await page.evaluate(() => (document.activeElement as HTMLElement)?.dataset.nav)) !== "archive") fail(`${name}: Past puzzles by the nav should leave focus on the nav`);
 
@@ -1923,7 +1954,7 @@ async function pastLinks(browser, name, viewport) {
   const wantFresh = { url: "/#/learn/1", title: "Afterstep · Lesson 1", sub: "Lesson 1 of 5" };
   if (JSON.stringify(fresh) !== JSON.stringify(wantFresh)) fail(`${name}: a newcomer opening #/puzzle/${today} should get the first lesson like the bare URL, ${JSON.stringify(wantFresh)}, got ${JSON.stringify(fresh)}`);
   await newcomer.close();
-  console.log(`${name}: entries are links; middle and Cmd/Ctrl click open new tabs; #/puzzle/${today} is "/"; Back focuses the entry or the heading`);
+  console.log(`${name}: entries are links; ${clicks.length === 2 ? "middle and Cmd/Ctrl click open new tabs" : "Cmd/Ctrl click opens a new tab"}; #/puzzle/${today} is "/"; Back focuses the entry or the heading`);
 }
 
 // ── Level loading (lab#40) ─────────────────────────────────────────────────
@@ -1949,6 +1980,7 @@ async function levelLoad(browser, name, viewport) {
   // once per such request; any other console error fails.
   let netLines = 0, netExpected = 0;
   page.on("console", (m) => {
+    if (engine === "webkit" && WEBKIT_BLOCKED.test(m.text())) return void netLines++;
     if (m.type() !== "error") return;
     if (/^Failed to load resource: (net::ERR_INTERNET_DISCONNECTED|the server responded with a status of 404\b)/.test(m.text())) netLines++;
     else fail(`${name}: console error: ${m.text()}`);
@@ -2005,7 +2037,7 @@ async function levelLoad(browser, name, viewport) {
     if (s.live !== want || s.liveRole !== "status") fail(`${name}: ${label}: the message should be read out politely (live "${s.live}", role ${s.liveRole})`);
     const onNav = await page.evaluate(() => !!document.activeElement.closest("nav"));
     if (onNav) {
-      for (let i = 0; i < 4 && (await page.evaluate(() => document.activeElement.closest("nav"))); i++) await page.keyboard.press("Tab");
+      for (let i = 0; i < 4 && (await page.evaluate(() => document.activeElement.closest("nav"))); i++) await page.keyboard.press(TAB);
       const next = await page.evaluate(() => document.activeElement.id);
       if (next !== "retry") fail(`${name}: ${label}: Tab from the nav should reach Retry next, reached "${next}"`);
     } else if (s.focus !== "retry") fail(`${name}: ${label}: focus should be on Retry, is on "${s.focus}"`);
@@ -2104,6 +2136,7 @@ async function levelLoad(browser, name, viewport) {
   const phone = await newPage(browser, { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
   let phoneLines = 0, phoneExpected = 0;
   phone.on("console", (m) => {
+    if (engine === "webkit" && WEBKIT_BLOCKED.test(m.text())) return void phoneLines++;
     if (m.type() !== "error") return;
     if (/^Failed to load resource: net::ERR_INTERNET_DISCONNECTED/.test(m.text())) phoneLines++;
     else fail(`${name} phone: console error: ${m.text()}`);
@@ -2346,39 +2379,51 @@ async function analyticsFlow(browser) {
   console.log("analytics: no script and nothing sent with Do Not Track, GPC or on workers.dev; harmless when blocked");
 }
 
-const browser = await chromium.launch({ executablePath: browserPath });
+const launch = () => (engine === "webkit" ? webkit.launch() : chromium.launch({ executablePath: browserPath }));
+let browser = await launch();
+// Playwright's WebKit stops opening pages after about 60 in one browser, even with each one
+// closed, so in WebKit every step gets a fresh browser. Chromium keeps the one.
+const fresh = async () => {
+  if (engine === "webkit") {
+    await browser.close();
+    browser = await launch();
+  }
+  return browser;
+};
+console.log(`engine: ${engine === "webkit" ? `WebKit ${browser.version()} (Playwright's)` : `Chromium ${browser.version()} (${browserPath})`}`);
 try {
-  await routes(browser, "routes", { width: 1280, height: 900 });
-  await pastLinks(browser, "past-links", { width: 1280, height: 900 });
-  await levelLoad(browser, "level-load", { width: 1280, height: 900 });
-  await likesFlow(browser);
-  await likeTabs(browser);
-  await footerPrivacy(browser);
-  await analyticsFlow(browser);
-  await keyboardStart(browser, "desktop-dark", { width: 1280, height: 900 });
-  await keysHint(browser, "keys-hint");
-  await session(browser, "desktop-dark", { width: 1280, height: 900 }, "dark");
-  await session(browser, "phone-light", { width: 390, height: 844 }, "light");
-  await touchControls(browser, "phone-touch", { width: 390, height: 844 });
-  await hintFlow(browser, "desktop-hints", { width: 1280, height: 900 });
-  await oldSave(browser, "old-save", { width: 390, height: 844 });
-  await winWrap(browser);
-  await lessons(browser, "desktop-lessons-dark", { width: 1280, height: 900 }, "dark", false);
-  await lessons(browser, "phone-lessons-light", { width: 390, height: 844 }, "light", true);
-  await lessons(browser, "phone-360-lessons-dark", { width: 360, height: 640 }, "dark", true);
-  await lessons(browser, "phone-700-lessons-light", { width: 390, height: 700 }, "light", true);
-  await lessons(browser, "laptop-700-lessons-dark", { width: 1280, height: 700 }, "dark", false);
+  await routes(await fresh(), "routes", { width: 1280, height: 900 });
+  await pastLinks(await fresh(), "past-links", { width: 1280, height: 900 });
+  await levelLoad(await fresh(), "level-load", { width: 1280, height: 900 });
+  await likesFlow(await fresh());
+  await likeTabs(await fresh());
+  await footerPrivacy(await fresh());
+  await analyticsFlow(await fresh());
+  await keyboardStart(await fresh(), "desktop-dark", { width: 1280, height: 900 });
+  await keysHint(await fresh(), "keys-hint");
+  await session(await fresh(), "desktop-dark", { width: 1280, height: 900 }, "dark");
+  await session(await fresh(), "phone-light", { width: 390, height: 844 }, "light");
+  await touchControls(await fresh(), "phone-touch", { width: 390, height: 844 });
+  await hintFlow(await fresh(), "desktop-hints", { width: 1280, height: 900 });
+  await oldSave(await fresh(), "old-save", { width: 390, height: 844 });
+  await winWrap(await fresh());
+  await lessons(await fresh(), "desktop-lessons-dark", { width: 1280, height: 900 }, "dark", false);
+  await lessons(await fresh(), "phone-lessons-light", { width: 390, height: 844 }, "light", true);
+  await lessons(await fresh(), "phone-360-lessons-dark", { width: 360, height: 640 }, "dark", true);
+  await lessons(await fresh(), "phone-700-lessons-light", { width: 390, height: 700 }, "light", true);
+  await lessons(await fresh(), "laptop-700-lessons-dark", { width: 1280, height: 700 }, "dark", false);
   for (const [w, h] of [[360, 640], [390, 700], [390, 844], [320, 568], [844, 390], [667, 375]])
-    await fitScreens(browser, `fit-${w}x${h}`, { width: w, height: h }, w > h ? "dark" : "light");
+    await fitScreens(await fresh(), `fit-${w}x${h}`, { width: w, height: h }, w > h ? "dark" : "light");
   for (const [w, h] of [[1280, 700], [1366, 650]])
-    for (const scheme of ["light", "dark"]) await fitScreens(browser, `laptop-fit-${w}x${h}-${scheme}`, { width: w, height: h }, scheme, false);
-  await laptopEdges(browser);
+    for (const scheme of ["light", "dark"]) await fitScreens(await fresh(), `laptop-fit-${w}x${h}-${scheme}`, { width: w, height: h }, scheme, false);
+  await laptopEdges(await fresh());
 } finally {
   await browser.close();
 }
 
+if (skipped.length) console.log(`Skipped in ${engine}:\n- ${skipped.join("\n- ")}`);
 if (failures.length) {
   console.error("PLAYTEST FAIL\n- " + failures.join("\n- "));
   process.exit(1);
 }
-console.log(`PLAYTEST PASS (screenshots in ${out})`);
+console.log(`PLAYTEST PASS${engine === "webkit" ? " in WebKit" : ""} (screenshots in ${out})`);
