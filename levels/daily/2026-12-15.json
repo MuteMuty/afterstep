@@ -1,0 +1,18 @@
+{
+  "date": "2026-12-15",
+  "delay": 3,
+  "desync": false,
+  "explored": 1787,
+  "grid": [
+    ".#....",
+    "....#.",
+    ".....A",
+    "......",
+    ".S.a#.",
+    "#.#E#."
+  ],
+  "id": 36,
+  "par": 11,
+  "solution": "UURRRRDLLDD",
+  "tier": "easy"
+}
