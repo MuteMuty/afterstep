@@ -50,7 +50,21 @@ npx playwright install webkit
 PLAYTEST_ENGINE=webkit node tests/playtest.ts http://localhost:4173   # screenshots in playtest-out/webkit/
 ```
 
-In WebKit, Tab skips buttons and links as Safari's does, so the playtest presses Option-Tab there. It prints each check WebKit can't make, and why, then lists them again at the end. If Playwright keeps its browsers somewhere other than the default, set `PLAYWRIGHT_BROWSERS_PATH` for the run too.
+In WebKit, Tab skips buttons and links as Safari's does, so the playtest presses Option-Tab there. It prints each check WebKit can't make, and why, then lists them again at the end.
+
+On the lab's Mac (Playwright 1.52, Node 26), `npx playwright install webkit` can hang: it downloads the whole archive, unpacks one file and stops. If it does, stop it and install the same official build by hand into a folder of your own:
+
+```sh
+export PLAYWRIGHT_BROWSERS_PATH=~/brightloop-lab/.playwright-browsers
+npx playwright install --dry-run webkit   # prints the "Install location" and "Download url" below
+mkdir -p ~/brightloop-lab/.playwright-browsers/webkit-2158 && cd ~/brightloop-lab/.playwright-browsers/webkit-2158
+curl -fLO https://cdn.playwright.dev/dbazure/download/playwright/builds/webkit/2158/webkit-mac-15-arm64.zip
+unzip -q webkit-mac-15-arm64.zip && rm webkit-mac-15-arm64.zip && touch INSTALLATION_COMPLETE
+cd -
+PLAYTEST_ENGINE=webkit node tests/playtest.ts http://localhost:4173
+```
+
+The folder and URL are the ones `--dry-run` prints; they change with the Playwright version and the Mac. `INSTALLATION_COMPLETE` is the marker Playwright writes when an install finishes. Keep `PLAYWRIGHT_BROWSERS_PATH` set for every WebKit run.
 
 ## Status
 

@@ -100,7 +100,8 @@
 //
 // Usage: node tests/playtest.ts <baseUrl>
 // Env:   PLAYTEST_ENGINE   chromium (default) or webkit: Playwright's own WebKit, the
-//                          engine Safari uses (install it with `npx playwright install webkit`)
+//                          engine Safari uses (install it with `npx playwright install webkit`, or by hand
+//                          as the README says if that hangs)
 //        PLAYTEST_BROWSER  Chromium-based browser executable (default: Brave)
 //        PLAYTEST_OUT      screenshot folder (default: ./playtest-out)
 //        LAB_ANALYTICS_JS  the hub's built shared analytics script (default: the lab
@@ -165,9 +166,14 @@ declare global { interface Window { [hook: `__${string}`]: any } } // the playte
 
 const failures = [];
 const fail = (msg) => failures.push(msg);
-// Checks this engine can't make, each with why, printed as they're skipped and again at the end.
-const skipped = [];
-const skip = (what, why) => { skipped.push(`${what}: ${why}`); console.log(`skipped in ${engine}: ${what}: ${why}`); };
+// Checks this engine can't make, each with why, printed as they're skipped and listed once at the end
+// with the steps that skipped them.
+const skipped = new Map<string, { why: string; names: string[] }>();
+const skip = (name, what, why) => {
+  console.log(`skipped in ${engine}: ${name}: ${what}: ${why}`);
+  if (!skipped.has(what)) skipped.set(what, { why, names: [] });
+  skipped.get(what).names.push(name);
+};
 const dialogOpens = (page) => page.waitForSelector("dialog[open]", { timeout: 2500 }).then(() => true, () => false);
 
 // The solved line below the board: its text and Next label, or null when hidden.
@@ -313,7 +319,7 @@ async function winKeys(page, name, playing) {
   const keys = ["KeyR", "KeyZ", "Backspace", "Period", "ArrowLeft", "KeyD"];
   if (engine === "webkit") {
     keys.splice(keys.indexOf("Backspace"), 1);
-    skip(`${name}: Backspace behind the win dialog`, "Playwright's WebKit goes back in history on Backspace even on a page with no script (Safari doesn't)");
+    skip(name, "Backspace behind the win dialog", "Playwright's WebKit goes back in history on Backspace even on a page with no script (Safari doesn't)");
   }
   for (const k of keys) await page.keyboard.press(k);
   await page.waitForTimeout(200);
@@ -1862,7 +1868,7 @@ async function pastLinks(browser, name, viewport) {
   const buttonBorder = await page.evaluate(() => `${getComputedStyle(document.querySelector("[data-nav]")).borderTopWidth} solid`);
   await page.mouse.move(0, 0);
   const rest = await look();
-  if (engine === "webkit") skip(`${name}: an entry's hand cursor`, "WebKit computes cursor auto for a link and draws the hand itself, so the computed style can't show it");
+  if (engine === "webkit") skip(name, "an entry's hand cursor", "WebKit computes cursor auto for a link and draws the hand itself, so the computed style can't show it");
   if (rest.display !== "flex" || rest.border !== buttonBorder || rest.radius !== "10px" || rest.underline !== "none" || (rest.cursor !== "pointer" && engine !== "webkit") || rest.color !== rest.bodyColor || Math.abs(rest.width - rest.li) > 0.5)
     fail(`${name}: an entry should look like the old button row (border ${buttonBorder}), got ${JSON.stringify(rest)}`);
   await link.hover();
@@ -1884,7 +1890,7 @@ async function pastLinks(browser, name, viewport) {
   const clicks: { button?: "middle"; modifiers?: ["ControlOrMeta"] }[] = [{ button: "middle" }, { modifiers: ["ControlOrMeta"] }];
   if (engine === "webkit") {
     clicks.shift();
-    skip(`${name}: middle click opens a new tab`, "Playwright's WebKit follows a middle-clicked link in the same tab even on a page with no script (Safari opens a new tab)");
+    skip(name, "middle click opens a new tab", "Playwright's WebKit follows a middle-clicked link in the same tab even on a page with no script (Safari opens a new tab)");
   }
   for (const how of clicks) {
     const label = how.button ? "middle click" : "Cmd/Ctrl click";
@@ -1920,8 +1926,12 @@ async function pastLinks(browser, name, viewport) {
   await expectAt("Back from a lesson", { url: "/#/past", screen: "past" });
   await expectPastFocus(page, name, "Back to Past puzzles from a lesson", null);
   // Past puzzles by the nav leaves focus on the nav. WebKit, like Safari on macOS,
-  // doesn't focus a button on click, so there it's pressed by keyboard.
+  // doesn't focus a button on click, so there a click lands focus on the heading,
+  // and the nav is also pressed by keyboard.
   if (engine === "webkit") {
+    await page.click('[data-nav="archive"]');
+    await settle("past");
+    await expectPastFocus(page, name, "Past puzzles by a click on the nav in WebKit", null);
     await page.focus('[data-nav="archive"]');
     await page.keyboard.press("Enter");
   } else await page.click('[data-nav="archive"]');
@@ -2421,7 +2431,7 @@ try {
   await browser.close();
 }
 
-if (skipped.length) console.log(`Skipped in ${engine}:\n- ${skipped.join("\n- ")}`);
+if (skipped.size) console.log(`Skipped in ${engine}:\n- ${[...skipped].map(([what, { why, names }]) => `${what} (${names.join(", ")}): ${why}`).join("\n- ")}`);
 if (failures.length) {
   console.error("PLAYTEST FAIL\n- " + failures.join("\n- "));
   process.exit(1);
