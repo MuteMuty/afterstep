@@ -134,6 +134,12 @@ main { flex: 1; width: 100%; max-width: 560px; margin: 0 auto; padding: 0 1rem 2
 }
 
 /* ---------- board ---------- */
+/* Until main.ts builds the first board, only the title shows (lab#63). The
+   board's size, the tip and the line under the title all come with the level
+   (lesson 1's board is one row, a daily's six to eight), so the board and
+   everything below it wait unseen in the room the default 6x6 board takes,
+   and appear where they belong instead of moving there. */
+.play:has(#board:empty) > :not(.level-head) { visibility: hidden; }
 .board-wrap {
   --cols: 6;
   --rows: 6;
