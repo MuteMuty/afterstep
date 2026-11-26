@@ -44,6 +44,10 @@
 // and the largest past puzzle, light and dark, with cells of 40px or more; at
 // 1280x520 cells stay at 40px or more and the page scrolls instead; at 1280x900
 // the board keeps its usual size.
+// Past puzzles (lab#64): at 320x568, 360x640, 390x844 and 480x844, light and
+// dark, with solved and hinted rows, no row's puzzle number or date breaks, no
+// words in a row touch, rows are 44px or taller and nothing scrolls sideways;
+// at 1280x900 each result stays beside its date.
 // Layout shift (lab#63): a cold load of lesson 1 and of today's puzzle at
 // 390x844 (with and without touch) and 1280x900 has a cumulative layout shift
 // of 0.05 or less, measured by a buffered layout-shift PerformanceObserver
@@ -1338,6 +1342,98 @@ async function laptopEdges(browser) {
   }
 }
 
+// Past puzzles on phones (lab#64): past puzzles unsolved, solved, and solved
+// with hints (one with 12). At each size, no row's "Puzzle N" or date breaks,
+// no two words in a row touch (words of its two columns keep 8px apart on a
+// line, others 2px), rows are 44px or taller and the page doesn't scroll
+// sideways. At 1280x900 each row's result stays beside the date.
+async function archiveRows(browser) {
+  const dates = readdirSync(join(repo, "levels/daily")).map((f) => f.replace(".json", "")).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d) && d <= today).sort();
+  const results = {}, bestHints = {};
+  // Of every three, one unsolved, one solved and one solved with hints.
+  dates.forEach((d, i) => {
+    if (i % 3) results[d] = 12 + (i % 9);
+    if (i % 3 === 2) bestHints[d] = i === 2 ? 12 : 2;
+  });
+  const saved = JSON.stringify({ learned: true, results, bestHints });
+  for (const [width, height] of [[320, 568], [360, 640], [390, 844], [480, 844], [1280, 900]])
+    for (const colorScheme of width === 1280 ? ["dark"] : ["light", "dark"]) {
+      const name = `past-rows-${width}x${height}-${colorScheme}`;
+      const page = await newPage(browser, { viewport: { width, height }, colorScheme });
+      page.on("pageerror", (e) => fail(`${name}: page error: ${e.message}`));
+      await page.addInitScript((s) => location.protocol.startsWith("http") && localStorage.setItem("afterstep:v1", s), saved);
+      await page.goto(`${base}/#/past`, { waitUntil: "networkidle" }).catch((e) => fail(`${name}: could not load ${base}/#/past: ${e.message}`));
+      if (!(await page.waitForSelector("#archive-list a", { timeout: 8000 }).catch(() => null))) {
+        fail(`${name}: Past puzzles never listed`);
+        await page.close();
+        continue;
+      }
+      const got = await page.evaluate(() => {
+        // Each word's boxes (one per line it's on), with the column it's in.
+        const words = (a: HTMLElement) => {
+          const out = [];
+          [...a.children].forEach((col, c) => {
+            const walk = document.createTreeWalker(col, NodeFilter.SHOW_TEXT);
+            for (let t = walk.nextNode(); t; t = walk.nextNode())
+              for (const m of t.textContent.matchAll(/\S+/g)) {
+                const r = document.createRange();
+                r.setStart(t, m.index);
+                r.setEnd(t, m.index + m[0].length);
+                for (const b of r.getClientRects()) out.push({ w: m[0], c, left: b.left, right: b.right, top: b.top, bottom: b.bottom });
+              }
+          });
+          return out;
+        };
+        // How many lines a phrase of the row is drawn on.
+        const lines = (a: HTMLElement, phrase: string) => {
+          const walk = document.createTreeWalker(a, NodeFilter.SHOW_TEXT);
+          for (let t = walk.nextNode(); t; t = walk.nextNode()) {
+            const i = t.textContent.indexOf(phrase);
+            if (i < 0) continue;
+            const r = document.createRange();
+            r.setStart(t, i);
+            r.setEnd(t, i + phrase.length);
+            return new Set([...r.getClientRects()].map((b) => Math.round(b.top))).size;
+          }
+          return -1;
+        };
+        return {
+          scroll: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+          rows: [...document.querySelectorAll<HTMLElement>("#archive-list a")].map((a) => {
+            const num = a.textContent.match(/^Puzzle \d+/)[0];
+            const date = a.firstElementChild.querySelector<HTMLElement>(".meta").textContent;
+            const ws = words(a);
+            const touching = [];
+            for (let i = 0; i < ws.length; i++)
+              for (let j = i + 1; j < ws.length; j++) {
+                const [p, q] = ws[i].left <= ws[j].left ? [ws[i], ws[j]] : [ws[j], ws[i]];
+                const sameLine = Math.min(p.bottom, q.bottom) - Math.max(p.top, q.top) > 2;
+                const need = p.c !== q.c ? 8 : 2;
+                if (sameLine && q.left - p.right < need) touching.push(`"${p.w}" and "${q.w}" ${(q.left - p.right).toFixed(1)}px apart`);
+              }
+            const [l, r] = [...a.children].map((c) => c.getBoundingClientRect());
+            return {
+              text: a.textContent, num, date, numLines: lines(a, num), dateLines: lines(a, date), touching,
+              height: a.getBoundingClientRect().height, sideBySide: Math.abs(l.top - r.top) < 2,
+            };
+          }),
+        };
+      });
+      if (got.scroll > 0) fail(`${name}: Past puzzles scrolls ${got.scroll}px sideways`);
+      for (const row of got.rows) {
+        if (row.numLines !== 1) fail(`${name}: "${row.num}" should stay on one line, takes ${row.numLines} ("${row.text}")`);
+        if (row.dateLines !== 1) fail(`${name}: "${row.date}" should stay on one line, takes ${row.dateLines} ("${row.text}")`);
+        if (row.touching.length) fail(`${name}: words touch in "${row.text}": ${row.touching.join(", ")}`);
+        if (row.height < 44) fail(`${name}: the row "${row.text}" is ${row.height.toFixed(1)}px tall, under 44px`);
+        if (width === 1280 && !row.sideBySide) fail(`${name}: the result should stay beside the date at 1280px ("${row.text}")`);
+      }
+      const heights = got.rows.map((r) => Math.round(r.height));
+      console.log(`${name}: ${got.rows.length} rows, ${Math.min(...heights)}-${Math.max(...heights)}px tall, checked`);
+      if (colorScheme === "light" || width === 1280) await page.screenshot({ path: join(out, `${name}.png`), fullPage: true });
+      await page.close();
+    }
+}
+
 // Layout shift (lab#63): a cold load of lesson 1 (a newcomer at the bare URL)
 // and of today's puzzle (a returning player) at 390x844, with and without
 // touch, and 1280x900, each in a new browser context with an empty cache, adds
@@ -2483,6 +2579,7 @@ try {
   for (const [w, h] of [[1280, 700], [1366, 650]])
     for (const scheme of ["light", "dark"]) await fitScreens(await fresh(), `laptop-fit-${w}x${h}-${scheme}`, { width: w, height: h }, scheme, false);
   await laptopEdges(await fresh());
+  await archiveRows(await fresh());
   await coldLoadShift(await fresh());
 } finally {
   await browser.close();
