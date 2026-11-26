@@ -44,6 +44,10 @@
 // and the largest past puzzle, light and dark, with cells of 40px or more; at
 // 1280x520 cells stay at 40px or more and the page scrolls instead; at 1280x900
 // the board keeps its usual size.
+// Layout shift (lab#63): a cold load of lesson 1 and of today's puzzle at
+// 390x844 (with and without touch) and 1280x900 has a cumulative layout shift
+// of 0.05 or less, measured by a buffered layout-shift PerformanceObserver
+// (Chromium only).
 // Nudges (lab#29): at each of those sizes today's nudge, shown by tapping Hint,
 // and every lesson's and daily's nudge (from the engine build the page uses)
 // fit the status line on one line with room to spare.
@@ -1334,6 +1338,58 @@ async function laptopEdges(browser) {
   }
 }
 
+// Layout shift (lab#63): a cold load of lesson 1 (a newcomer at the bare URL)
+// and of today's puzzle (a returning player) at 390x844, with and without
+// touch, and 1280x900, each in a new browser context with an empty cache, adds
+// up to a cumulative layout shift of 0.05 or less, counted by a buffered
+// PerformanceObserver from the first frame until the like counts have shown.
+// The puzzle files arrive COLD_LEVEL_MS late, so the page is always drawn
+// before its board is built, as on a real network. WebKit has no layout-shift
+// entries, so there it's skipped.
+const MAX_CLS = 0.05;
+const COLD_LEVEL_MS = 300;
+async function coldLoadShift(browser) {
+  const name = "cold-load";
+  if (engine === "webkit") return skip(name, "cumulative layout shift", "WebKit reports no layout-shift entries");
+  for (const [viewport, touch] of [[{ width: 390, height: 844 }, false], [{ width: 390, height: 844 }, true], [{ width: 1280, height: 900 }, false]] as const) {
+    for (const [label, learned] of [["lesson 1", false], ["today's puzzle", true]] as const) {
+      const at = `${label} at ${viewport.width}x${viewport.height}${touch ? " touch" : ""}`;
+      const page = await newPage(browser, { viewport, hasTouch: touch, isMobile: touch });
+      page.on("pageerror", (e) => fail(`${name}: ${at}: page error: ${e.message}`));
+      await page.addInitScript((learned) => {
+        const w = window as unknown as { shifts: { value: number; sources: string[] }[] };
+        w.shifts = [];
+        new PerformanceObserver((list) => {
+          for (const e of list.getEntries() as unknown as { value: number; hadRecentInput: boolean; sources: { node?: Element; previousRect: DOMRectReadOnly; currentRect: DOMRectReadOnly }[] }[]) {
+            if (e.hadRecentInput) continue;
+            w.shifts.push({ value: e.value, sources: e.sources.map((s) => `${s.node?.id || s.node?.className || s.node?.nodeName} ${Math.round(s.previousRect.y)}->${Math.round(s.currentRect.y)}px`) });
+          }
+        }).observe({ type: "layout-shift", buffered: true });
+        if (learned) localStorage.setItem("afterstep:v1", JSON.stringify({ learned: true, results: {} }));
+      }, learned);
+      // On a real network the page is drawn before the puzzle arrives; on
+      // localhost that's a race, so the puzzle files are held back a little.
+      await page.route("**/levels/**", (r) => setTimeout(() => r.continue().catch(() => {}), COLD_LEVEL_MS));
+      await page.goto(`${base}/`);
+      if (!(await page.waitForSelector(".cell", { timeout: 8000 }).catch(() => null))) {
+        fail(`${name}: board never rendered for ${at}`);
+        await page.close();
+        continue;
+      }
+      // The like counts load once the puzzle is on screen, and the heart joins the footer line.
+      await page.waitForSelector("#like-foot:not([hidden])", { timeout: 4000 }).catch(() => fail(`${name}: ${at}: the footer's heart never showed`));
+      await page.waitForTimeout(300);
+      const sub = await page.textContent("#level-sub");
+      if (learned ? sub?.startsWith("Lesson") : sub !== "Lesson 1 of 5") fail(`${name}: ${at} opened "${sub}"`);
+      const shifts = await page.evaluate(() => (window as unknown as { shifts: { value: number; sources: string[] }[] }).shifts);
+      const cls = shifts.reduce((sum, s) => sum + s.value, 0);
+      if (cls > MAX_CLS) fail(`${name}: ${at}: cumulative layout shift ${cls.toFixed(3)}, over ${MAX_CLS}: ${shifts.map((s) => `${s.value.toFixed(3)} (${s.sources.join(", ")})`).join("; ")}`);
+      console.log(`${name}: ${at}: cumulative layout shift ${cls.toFixed(4)}`);
+      await page.close();
+    }
+  }
+}
+
 // ── Likes (lab#17) ──────────────────────────────────────────────────────────
 // Every page talks to a mocked lab like API (never the live one), and may only
 // ask Afterstep's own origin and lab.brightloopapps.com/api/likes. Afterstep
@@ -2427,6 +2483,7 @@ try {
   for (const [w, h] of [[1280, 700], [1366, 650]])
     for (const scheme of ["light", "dark"]) await fitScreens(await fresh(), `laptop-fit-${w}x${h}-${scheme}`, { width: w, height: h }, scheme, false);
   await laptopEdges(await fresh());
+  await coldLoadShift(await fresh());
 } finally {
   await browser.close();
 }
