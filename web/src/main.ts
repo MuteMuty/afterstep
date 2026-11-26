@@ -539,7 +539,7 @@ function openArchive() {
         const best = bestResult(save, d.date);
         a.href = puzzleHref(d.date);
         a.dataset.date = d.date;
-        a.innerHTML = `<span>Puzzle ${d.id} <span class="meta">${prettyDate(d.date)}</span></span>` +
+        a.innerHTML = `<span><span>Puzzle ${d.id}</span> <span class="meta">${prettyDate(d.date)}</span></span>` +
           `<span class="meta">${TIER[d.tier]}${best ? `, <span class="done">${archiveParts(best).map((t) => `<span>${t}</span>`).join(" ")}</span>` : ""}</span>`;
         a.onclick = (e) => {
           if (!isPlainClick(e)) return;

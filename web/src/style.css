@@ -504,12 +504,16 @@ button.hinted { border-color: var(--sun); box-shadow: 0 0 0 3px var(--sun-glow);
 .archive .meta { color: var(--ink-dim); font-variant-numeric: tabular-nums; }
 .archive .done { color: var(--sun); }
 .archive .done > span { white-space: nowrap; }
-/* Wider screens: a hinted result ("solved in 14, including 2 hints") may need a
-   second line; it takes it on the right, so the date stays whole (lab#55). */
-@media (min-width: 601px) {
-  .archive li a { gap: 0.75rem; }
-  .archive li a > :first-child .meta { white-space: nowrap; }
-  .archive li a > :last-child { text-align: right; }
+/* "Puzzle 7" and its date each stay whole: a row breaks only between them, and
+   between the phrases of its result (lab#55, lab#64). */
+.archive li a > :first-child > span { white-space: nowrap; }
+.archive li a { column-gap: 0.75rem; }
+.archive li a > :last-child { text-align: right; }
+/* Phones: a result that doesn't fit beside the date takes the next line, on the
+   right, so the date never squeezes or touches it (lab#64). */
+@media (max-width: 600px) {
+  .archive li a { flex-wrap: wrap; }
+  .archive li a > :last-child { margin-left: auto; }
 }
 
 /* ---------- loading (lab#40) ---------- */
